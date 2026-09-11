@@ -21,7 +21,8 @@ import {
   saveDoc,
   deleteDocById,
   batchSaveDocs,
-  clearCollection
+  clearCollection,
+  getFirestoreConnectionInfo
 } from './firestore.js';
 
 // Relational Store In-Memory with Scoped Query APIs & Real-time Firestore Persistence
@@ -183,26 +184,65 @@ class RelationalDatabase {
     return { success: true, clearedCollections };
   }
 
-  private ensureBaselineSyncedToFirestore(): void {
-    // Write in background so Firestore has complete dataset
-    for (const c of this.clients) {
-      saveDoc('clients', c.id, c).catch(() => {});
-    }
-    for (const b of this.brands) {
-      saveDoc('brands', b.id, b).catch(() => {});
-    }
-    for (const cmp of this.campaigns) {
-      saveDoc('campaigns', cmp.id, cmp).catch(() => {});
-    }
-    for (const l of this.lineItems) {
-      saveDoc('line_items', l.id, l).catch(() => {});
-    }
-    for (const ds of this.lineItemDataSources) {
-      saveDoc('line_item_data_sources', ds.id, ds).catch(() => {});
-    }
-    for (const a of this.agencies) {
-      saveDoc('agencies', a.id, a).catch(() => {});
-    }
+  /**
+   * Push the current in-memory state back to Firestore in bulk. Used by the
+   * "Sync to Firestore" admin action to force a full re-write, e.g. after
+   * data was edited directly in memory or a prior write was missed.
+   */
+  async resyncToFirestore(agencyId?: string): Promise<{
+    agencies: number;
+    clients: number;
+    brands: number;
+    campaigns: number;
+    lineItems: number;
+    alerts: number;
+  }> {
+    const agencies = agencyId ? this.agencies.filter(a => a.id === agencyId) : this.agencies;
+    const clients = agencyId ? this.clients.filter(c => c.agency_id === agencyId) : this.clients;
+    const brands = agencyId ? this.brands.filter(b => b.agency_id === agencyId) : this.brands;
+    const campaigns = agencyId ? this.campaigns.filter(c => c.agency_id === agencyId) : this.campaigns;
+    const lineItems = agencyId ? this.lineItems.filter(l => l.agency_id === agencyId) : this.lineItems;
+    const alerts = agencyId ? this.alerts.filter(a => a.agency_id === agencyId) : this.alerts;
+
+    await Promise.all([
+      batchSaveDocs('agencies', agencies),
+      batchSaveDocs('clients', clients),
+      batchSaveDocs('brands', brands),
+      batchSaveDocs('campaigns', campaigns),
+      batchSaveDocs('line_items', lineItems),
+      batchSaveDocs('alerts', alerts)
+    ]);
+
+    return {
+      agencies: agencies.length,
+      clients: clients.length,
+      brands: brands.length,
+      campaigns: campaigns.length,
+      lineItems: lineItems.length,
+      alerts: alerts.length
+    };
+  }
+
+  getFirestoreStatus(agencyId?: string): {
+    connected: boolean;
+    projectId: string;
+    databaseId: string;
+    syncedCounts: { agencies: number; clients: number; brands: number; campaigns: number; lineItems: number; alerts: number };
+  } {
+    const { projectId, databaseId } = getFirestoreConnectionInfo();
+    return {
+      connected: this.firestoreInitialized,
+      projectId,
+      databaseId,
+      syncedCounts: {
+        agencies: (agencyId ? this.agencies.filter(a => a.id === agencyId) : this.agencies).length,
+        clients: (agencyId ? this.clients.filter(c => c.agency_id === agencyId) : this.clients).length,
+        brands: (agencyId ? this.brands.filter(b => b.agency_id === agencyId) : this.brands).length,
+        campaigns: (agencyId ? this.campaigns.filter(c => c.agency_id === agencyId) : this.campaigns).length,
+        lineItems: (agencyId ? this.lineItems.filter(l => l.agency_id === agencyId) : this.lineItems).length,
+        alerts: (agencyId ? this.alerts.filter(a => a.agency_id === agencyId) : this.alerts).length
+      }
+    };
   }
 
   // ==================== AGENCIES ====================

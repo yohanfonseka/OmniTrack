@@ -1,94 +1,13 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Test collection for client connectivity health-checks
-    match /test/{docId} {
-      allow read, write: if true;
-    }
 
-    // System metadata & state flags
-    match /system_metadata/{docId} {
-      allow read, write: if true;
-    }
-
-    // Agencies: Accessible for reads; writes restricted or admin-controlled
-    match /agencies/{agencyId} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // Users
-    match /users/{userId} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // Clients
-    match /clients/{clientId} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // Brands
-    match /brands/{brandId} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // Campaigns
-    match /campaigns/{campaignId} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // Line Items
-    match /line_items/{lineItemId} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // Daily Metrics
-    match /daily_metrics/{metricId} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // Alerts
-    match /alerts/{alertId} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // Unmapped Campaigns
-    match /unmapped_campaigns/{id} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // Imports
-    match /imports/{id} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // Platform Accounts
-    match /platform_accounts/{id} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // Line Item Data Sources
-    match /line_item_data_sources/{id} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // Audit logs
-    match /audit_logs/{logId} {
-      allow read: if true;
-      allow create: if true;
-      allow update, delete: if false; // Immutable audit log
+    // All application data is read and written exclusively by the backend
+    // server via the Firebase Admin SDK, which bypasses these rules. No
+    // client (web/mobile) should ever access Firestore directly, so every
+    // collection is closed to client SDK access.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

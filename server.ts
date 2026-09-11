@@ -14,7 +14,7 @@ async function startServer() {
   }
 
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '15mb' }));
   app.use(express.urlencoded({ extended: true, limit: '15mb' }));
@@ -817,6 +817,22 @@ async function startServer() {
       res.json({ success: true, message: 'Demo clients, brands, campaigns and line items re-seeded.' });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to seed demo data' });
+    }
+  });
+
+  // ==================== FIRESTORE STATUS / MANUAL SYNC ====================
+  app.get('/api/system/firestore-status', (req, res) => {
+    const agencyId = req.query.agency_id as string | undefined;
+    res.json(db.getFirestoreStatus(agencyId));
+  });
+
+  app.post('/api/system/firestore-sync', async (req, res) => {
+    try {
+      const agencyId = req.body?.agency_id as string | undefined;
+      const counts = await db.resyncToFirestore(agencyId);
+      res.json({ success: true, counts });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to sync to Firestore' });
     }
   });
 

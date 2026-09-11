@@ -1,36 +1,52 @@
 import fs from 'fs';
 import path from 'path';
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import {
-  getFirestore,
-  doc,
-  setDoc,
-  deleteDoc,
-  collection,
-  getDocs,
-  writeBatch,
-  Firestore
-} from 'firebase/firestore';
+import { initializeApp, applicationDefault, getApps, getApp, cert } from 'firebase-admin/app';
+import { getFirestore, Firestore } from 'firebase-admin/firestore';
 
 let firestoreInstance: Firestore | null = null;
 let firestoreDatabaseId: string = '';
 
-export function getFirestoreDb(): Firestore | null {
-  if (firestoreInstance) return firestoreInstance;
+interface AppletConfig {
+  projectId?: string;
+  firestoreDatabaseId?: string;
+}
+
+function loadAppletConfig(): AppletConfig {
   try {
     const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
     if (fs.existsSync(configPath)) {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      const app = getApps().length > 0 ? getApp() : initializeApp(config);
-      firestoreDatabaseId = config.firestoreDatabaseId || '';
-      firestoreInstance = getFirestore(app, firestoreDatabaseId);
-      console.log(`[Firestore Server] Connected to Firestore database: ${firestoreDatabaseId}`);
-      return firestoreInstance;
-    } else {
-      console.warn('[Firestore Server] firebase-applet-config.json not found');
+      return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     }
   } catch (err) {
-    console.error('[Firestore Server] Error initializing Firestore:', err);
+    console.warn('[Firestore Server] Could not read firebase-applet-config.json:', err);
+  }
+  return {};
+}
+
+/**
+ * Initializes the Firebase Admin SDK using Application Default Credentials.
+ * On GCP (Cloud Run, GCE, App Engine, GKE) this picks up the attached service
+ * account automatically. Locally, run `gcloud auth application-default login`
+ * or set GOOGLE_APPLICATION_CREDENTIALS to a service account key file.
+ */
+export function getFirestoreDb(): Firestore | null {
+  if (firestoreInstance) return firestoreInstance;
+  try {
+    const appletConfig = loadAppletConfig();
+    const projectId = process.env.FIREBASE_PROJECT_ID || appletConfig.projectId;
+    firestoreDatabaseId = process.env.FIRESTORE_DATABASE_ID || appletConfig.firestoreDatabaseId || '';
+
+    const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    const credential = serviceAccountPath && fs.existsSync(serviceAccountPath)
+      ? cert(serviceAccountPath)
+      : applicationDefault();
+
+    const app = getApps().length > 0 ? getApp() : initializeApp({ credential, projectId });
+    firestoreInstance = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
+    console.log(`[Firestore Server] Connected via Admin SDK to project "${projectId}", database "${firestoreDatabaseId || '(default)'}"`);
+    return firestoreInstance;
+  } catch (err) {
+    console.error('[Firestore Server] Error initializing Firestore Admin SDK:', err);
   }
   return null;
 }
@@ -42,13 +58,12 @@ export async function fetchCollection<T = any>(collectionName: string): Promise<
   const db = getFirestoreDb();
   if (!db) return [];
   try {
-    const snap = await getDocs(collection(db, collectionName));
+    const snap = await db.collection(collectionName).get();
     const items: T[] = [];
     snap.forEach(docSnap => {
-      const data = docSnap.data();
       items.push({
         id: docSnap.id,
-        ...data
+        ...docSnap.data()
       } as unknown as T);
     });
     return items;
@@ -68,8 +83,8 @@ export async function saveDoc(collectionName: string, docId: string, data: Recor
     const cleanData = { ...data };
     delete (cleanData as any).id; // ID is the document key
     cleanData._updated_at_firestore = new Date().toISOString();
-    
-    await setDoc(doc(db, collectionName, docId), cleanData, { merge: true });
+
+    await db.collection(collectionName).doc(docId).set(cleanData, { merge: true });
     return true;
   } catch (err) {
     console.error(`[Firestore Server] Error saving doc "${collectionName}/${docId}":`, err);
@@ -84,7 +99,7 @@ export async function deleteDocById(collectionName: string, docId: string): Prom
   const db = getFirestoreDb();
   if (!db) return false;
   try {
-    await deleteDoc(doc(db, collectionName, docId));
+    await db.collection(collectionName).doc(docId).delete();
     return true;
   } catch (err) {
     console.error(`[Firestore Server] Error deleting doc "${collectionName}/${docId}":`, err);
@@ -103,9 +118,9 @@ export async function batchSaveDocs(collectionName: string, items: Array<{ id: s
     const chunkSize = 400;
     for (let i = 0; i < items.length; i += chunkSize) {
       const chunk = items.slice(i, i + chunkSize);
-      const batch = writeBatch(db);
+      const batch = db.batch();
       for (const item of chunk) {
-        const docRef = doc(db, collectionName, item.id);
+        const docRef = db.collection(collectionName).doc(item.id);
         const clean = { ...item };
         delete (clean as any).id;
         clean._updated_at_firestore = new Date().toISOString();
@@ -127,14 +142,14 @@ export async function clearCollection(collectionName: string): Promise<number> {
   const db = getFirestoreDb();
   if (!db) return 0;
   try {
-    const snap = await getDocs(collection(db, collectionName));
+    const snap = await db.collection(collectionName).get();
     const docs = snap.docs;
     if (docs.length === 0) return 0;
 
     const chunkSize = 400;
     for (let i = 0; i < docs.length; i += chunkSize) {
       const chunk = docs.slice(i, i + chunkSize);
-      const batch = writeBatch(db);
+      const batch = db.batch();
       for (const d of chunk) {
         batch.delete(d.ref);
       }
@@ -146,4 +161,12 @@ export async function clearCollection(collectionName: string): Promise<number> {
     console.error(`[Firestore Server] Error clearing collection "${collectionName}":`, err);
     return 0;
   }
+}
+
+export function getFirestoreConnectionInfo(): { projectId: string; databaseId: string } {
+  const appletConfig = loadAppletConfig();
+  return {
+    projectId: process.env.FIREBASE_PROJECT_ID || appletConfig.projectId || '',
+    databaseId: firestoreDatabaseId || process.env.FIRESTORE_DATABASE_ID || appletConfig.firestoreDatabaseId || ''
+  };
 }
