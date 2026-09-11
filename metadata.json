@@ -1,0 +1,8 @@
+{
+  "name": "OmniTrack",
+  "description": "Multi-tenant digital agency campaign monitoring platform with drill-down pacing, health engine, and multi-platform analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

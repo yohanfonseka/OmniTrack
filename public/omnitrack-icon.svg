@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320">
+  <defs>
+    <linearGradient id="iconRingGrad" x1="15%" y1="85%" x2="85%" y2="15%">
+      <stop offset="0%" stop-color="#0047e1" />
+      <stop offset="25%" stop-color="#006eff" />
+      <stop offset="60%" stop-color="#00c0ff" />
+      <stop offset="85%" stop-color="#00e6a0" />
+      <stop offset="100%" stop-color="#00f59b" />
+    </linearGradient>
+    <linearGradient id="iconArrowBarsGrad" x1="20%" y1="80%" x2="85%" y2="15%">
+      <stop offset="0%" stop-color="#0084ff" />
+      <stop offset="35%" stop-color="#00beff" />
+      <stop offset="70%" stop-color="#00e5a3" />
+      <stop offset="100%" stop-color="#00f79d" />
+    </linearGradient>
+  </defs>
+  <g transform="translate(160, 160)">
+    <path d="
+      M 92 46
+      A 102 102 0 1 1 72 -72
+      L 104 -104
+      A 146 146 0 1 0 131 65
+      Z"
+      fill="url(#iconRingGrad)"
+    />
+    <path d="
+      M -84 26
+      C -84 22 -81 18 -77 18
+      L -60 18
+      C -56 18 -53 22 -53 26
+      L -53 74
+      C -63 62 -75 46 -84 26
+      Z"
+      fill="url(#iconArrowBarsGrad)"
+    />
+    <path d="
+      M -42 -26
+      C -42 -30 -39 -34 -34 -34
+      L -17 -34
+      C -12 -34 -9 -30 -9 -26
+      L -9 94
+      C -19 96 -30 94 -42 88
+      Z"
+      fill="url(#iconArrowBarsGrad)"
+    />
+    <path d="
+      M 2 -32
+      C 2 -36 5 -40 10 -40
+      L 27 -40
+      C 30 -40 33 -38 35 -36
+      L 62 -63
+      L 93 -32
+      L 48 13
+      L 48 84
+      C 34 89 18 90 2 87
+      Z"
+      fill="url(#iconArrowBarsGrad)"
+    />
+    <path d="
+      M 28 -37
+      L 76 -85
+      L 106 -55
+      L 58 -7
+      Z"
+      fill="url(#iconArrowBarsGrad)"
+    />
+    <path d="
+      M 60 -150
+      L 150 -150
+      L 150 -60
+      L 118 -76
+      L 96 -98
+      L 76 -118
+      Z"
+      fill="url(#iconArrowBarsGrad)"
+    />
+  </g>
+</svg>

@@ -1,0 +1,295 @@
+{
+  "entities": {
+    "Agency": {
+      "title": "Agency",
+      "description": "Multi-tenant agency entity managing client campaigns and seat quotas",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "plan": { "type": "string", "enum": ["boutique", "growth", "enterprise"] },
+        "status": { "type": "string", "enum": ["active", "suspended", "trial"] },
+        "contact_email": { "type": "string" },
+        "max_clients": { "type": "number" },
+        "max_campaigns": { "type": "number" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "name", "slug", "plan", "status", "contact_email"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Platform user with role-based access control (RBAC)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agency_id": { "type": "string" },
+        "client_id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["super_user", "agency_admin", "media_buyer", "client_viewer"] },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "role"]
+    },
+    "Client": {
+      "title": "Client",
+      "description": "Client organization managed by an agency",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agency_id": { "type": "string" },
+        "name": { "type": "string" },
+        "industry": { "type": "string" },
+        "currency": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "agency_id", "name", "currency"]
+    },
+    "Brand": {
+      "title": "Brand",
+      "description": "Brand belonging to a specific client organization",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agency_id": { "type": "string" },
+        "client_id": { "type": "string" },
+        "name": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "agency_id", "client_id", "name"]
+    },
+    "Campaign": {
+      "title": "Campaign",
+      "description": "Top-level business campaign coordinating multiple platform line items",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agency_id": { "type": "string" },
+        "client_id": { "type": "string" },
+        "brand_id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "objective": { "type": "string" },
+        "start_date": { "type": "string" },
+        "end_date": { "type": "string" },
+        "total_budget": { "type": "number" },
+        "currency": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "active", "paused", "completed"] },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "agency_id", "client_id", "brand_id", "name", "start_date", "end_date", "total_budget", "currency", "status"]
+    },
+    "CampaignLineItem": {
+      "title": "CampaignLineItem",
+      "description": "Specific platform channel line item execution",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agency_id": { "type": "string" },
+        "campaign_id": { "type": "string" },
+        "client_id": { "type": "string" },
+        "brand_id": { "type": "string" },
+        "platform": { "type": "string", "enum": ["meta", "tiktok", "google"] },
+        "platform_account_id": { "type": "string" },
+        "platform_campaign_id": { "type": "string" },
+        "name": { "type": "string" },
+        "objective": { "type": "string" },
+        "start_date": { "type": "string" },
+        "end_date": { "type": "string" },
+        "budget": { "type": "number" },
+        "currency": { "type": "string" },
+        "primary_kpi": { "type": "string" },
+        "primary_kpi_target": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "paused", "completed"] },
+        "pacing_tolerance": { "type": "number" }
+      },
+      "required": ["id", "agency_id", "campaign_id", "client_id", "brand_id", "platform", "platform_account_id", "platform_campaign_id", "name", "budget", "currency", "primary_kpi", "primary_kpi_target"]
+    },
+    "DailyMetric": {
+      "title": "DailyMetric",
+      "description": "Daily delivery and cost metric record per line item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agency_id": { "type": "string" },
+        "line_item_id": { "type": "string" },
+        "platform_campaign_id": { "type": "string" },
+        "report_date": { "type": "string" },
+        "spend": { "type": "number" },
+        "impressions": { "type": "number" },
+        "clicks": { "type": "number" },
+        "conversions": { "type": "number" },
+        "conversion_value": { "type": "number" },
+        "video_views": { "type": "number" },
+        "engagements": { "type": "number" }
+      },
+      "required": ["id", "agency_id", "line_item_id", "platform_campaign_id", "report_date", "spend", "impressions", "clicks", "conversions"]
+    },
+    "Alert": {
+      "title": "Alert",
+      "description": "Automated campaign delivery and pacing health alert",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agency_id": { "type": "string" },
+        "campaign_id": { "type": "string" },
+        "line_item_id": { "type": "string" },
+        "severity": { "type": "string", "enum": ["critical", "warning", "info"] },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "recommended_action": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "acknowledged", "resolved"] },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "agency_id", "campaign_id", "severity", "type", "title", "message", "status"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable security and operational event audit record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agency_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "action": { "type": "string" },
+        "resource_type": { "type": "string" },
+        "resource_id": { "type": "string" },
+        "details": { "type": "object" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "agency_id", "user_id", "action", "resource_type", "resource_id", "timestamp"]
+    },
+    "UnmappedCampaign": {
+      "title": "UnmappedCampaign",
+      "description": "Orphan campaign from ad platforms awaiting assignment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agency_id": { "type": "string" },
+        "platform": { "type": "string" },
+        "platform_campaign_id": { "type": "string" },
+        "campaign_name": { "type": "string" },
+        "account_id": { "type": "string" },
+        "account_name": { "type": "string" },
+        "status": { "type": "string" },
+        "total_spend": { "type": "number" },
+        "impressions": { "type": "number" },
+        "clicks": { "type": "number" },
+        "conversions": { "type": "number" }
+      },
+      "required": ["id", "agency_id", "platform", "platform_campaign_id", "campaign_name"]
+    },
+    "LineItemDataSource": {
+      "title": "LineItemDataSource",
+      "description": "Mapping link between a business line item and a live advertising platform campaign",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "line_item_id": { "type": "string" },
+        "platform": { "type": "string" },
+        "platform_account_id": { "type": "string" },
+        "platform_account_name": { "type": "string" },
+        "platform_campaign_id": { "type": "string" },
+        "platform_campaign_name": { "type": "string" },
+        "connection_id": { "type": "string" },
+        "linked_at": { "type": "string" },
+        "linked_by": { "type": "string" },
+        "last_seen_at": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "disconnected", "paused"] },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "line_item_id", "platform", "platform_account_id", "platform_campaign_id", "platform_campaign_name", "status"]
+    },
+    "PlatformAccount": {
+      "title": "PlatformAccount",
+      "description": "Connected ad platform ad account",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agency_id": { "type": "string" },
+        "platform": { "type": "string" },
+        "account_id": { "type": "string" },
+        "account_name": { "type": "string" },
+        "currency": { "type": "string" },
+        "timezone": { "type": "string" },
+        "status": { "type": "string" },
+        "last_synced_at": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "agency_id", "platform", "account_id", "account_name"]
+    },
+    "ImportJob": {
+      "title": "ImportJob",
+      "description": "History of campaign and metric ingestion jobs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agency_id": { "type": "string" },
+        "platform": { "type": "string" },
+        "records_imported": { "type": "number" },
+        "status": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "agency_id", "platform", "status"]
+    }
+  },
+  "firestore": {
+    "/agencies/{agencyId}": {
+      "schema": "Agency",
+      "description": "Collection of agency tenant profiles"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Global user accounts with agency assignments"
+    },
+    "/clients/{clientId}": {
+      "schema": "Client",
+      "description": "Client entities partitioned by agency"
+    },
+    "/brands/{brandId}": {
+      "schema": "Brand",
+      "description": "Brand entities under client accounts"
+    },
+    "/campaigns/{campaignId}": {
+      "schema": "Campaign",
+      "description": "Business campaign definitions"
+    },
+    "/line_items/{lineItemId}": {
+      "schema": "CampaignLineItem",
+      "description": "Platform advertising line items"
+    },
+    "/daily_metrics/{metricId}": {
+      "schema": "DailyMetric",
+      "description": "Daily reporting metrics with composite deduplication key"
+    },
+    "/alerts/{alertId}": {
+      "schema": "Alert",
+      "description": "Operational and health anomaly alerts"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Audit records for administrative compliance"
+    },
+    "/unmapped_campaigns/{id}": {
+      "schema": "UnmappedCampaign",
+      "description": "Ingested platform campaigns awaiting allocation"
+    },
+    "/line_item_data_sources/{id}": {
+      "schema": "LineItemDataSource",
+      "description": "Data source mappings connecting line items to platform campaigns"
+    },
+    "/platform_accounts/{id}": {
+      "schema": "PlatformAccount",
+      "description": "Integrated advertising platform accounts"
+    },
+    "/imports/{id}": {
+      "schema": "ImportJob",
+      "description": "Data ingestion and synchronization logs"
+    }
+  }
+}

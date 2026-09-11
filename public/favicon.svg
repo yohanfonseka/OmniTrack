@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Dark Navy Gradient for App Icon Squircle -->
+    <linearGradient id="iconBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d1738" />
+      <stop offset="100%" stop-color="#050a1c" />
+    </linearGradient>
+
+    <!-- Outer Circular Ring Gradient: Deep Royal Blue -> Cyan -> Emerald Mint -->
+    <linearGradient id="ringGrad" x1="15%" y1="85%" x2="85%" y2="15%">
+      <stop offset="0%" stop-color="#0047e1" />
+      <stop offset="25%" stop-color="#006eff" />
+      <stop offset="60%" stop-color="#00c0ff" />
+      <stop offset="85%" stop-color="#00e6a0" />
+      <stop offset="100%" stop-color="#00f59b" />
+    </linearGradient>
+
+    <!-- Inner Bars & Arrow Gradient: Bright Cyan -> Vibrant Mint Green -->
+    <linearGradient id="arrowBarsGrad" x1="20%" y1="80%" x2="85%" y2="15%">
+      <stop offset="0%" stop-color="#0084ff" />
+      <stop offset="35%" stop-color="#00beff" />
+      <stop offset="70%" stop-color="#00e5a3" />
+      <stop offset="100%" stop-color="#00f79d" />
+    </linearGradient>
+  </defs>
+
+  <!-- App Icon Squircle Background -->
+  <rect width="512" height="512" rx="118" fill="url(#iconBg)" />
+
+  <!-- Logo Mark centered at (256, 256) -->
+  <g id="omnitrack-mark" transform="translate(256, 256)">
+    <!-- Outer Ring with Top-Right Opening for Arrow -->
+    <!-- R_outer = 146, R_inner = 102 (thickness = 44px) -->
+    <path d="
+      M 92 46
+      A 102 102 0 1 1 72 -72
+      L 104 -104
+      A 146 146 0 1 0 131 65
+      Z"
+      fill="url(#ringGrad)"
+    />
+
+    <!-- Bar 1 (Left): Shortest, bottom curved conforming to inner ring -->
+    <path d="
+      M -84 26
+      C -84 22 -81 18 -77 18
+      L -60 18
+      C -56 18 -53 22 -53 26
+      L -53 74
+      C -63 62 -75 46 -84 26
+      Z"
+      fill="url(#arrowBarsGrad)"
+    />
+
+    <!-- Bar 2 (Center): Medium height, rounded top -->
+    <path d="
+      M -42 -26
+      C -42 -30 -39 -34 -34 -34
+      L -17 -34
+      C -12 -34 -9 -30 -9 -26
+      L -9 94
+      C -19 96 -30 94 -42 88
+      Z"
+      fill="url(#arrowBarsGrad)"
+    />
+
+    <!-- Bar 3 (Right) + Arrow Stem: Continuous upward flow transitioning at 45 deg -->
+    <path d="
+      M 2 -32
+      C 2 -36 5 -40 10 -40
+      L 27 -40
+      C 30 -40 33 -38 35 -36
+      L 62 -63
+      L 93 -32
+      L 48 13
+      L 48 84
+      C 34 89 18 90 2 87
+      Z"
+      fill="url(#arrowBarsGrad)"
+    />
+
+    <!-- Diagonal Arrow Shaft Extension -->
+    <path d="
+      M 28 -37
+      L 76 -85
+      L 106 -55
+      L 58 -7
+      Z"
+      fill="url(#arrowBarsGrad)"
+    />
+
+    <!-- Arrowhead: Sharp triangular 45 deg tip with winged barb -->
+    <path d="
+      M 60 -150
+      L 150 -150
+      L 150 -60
+      L 118 -76
+      L 96 -98
+      L 76 -118
+      Z"
+      fill="url(#arrowBarsGrad)"
+    />
+  </g>
+</svg>
