@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import { db } from './server/db.js';
 import { HealthEngine } from './server/healthEngine.js';
 import { CsvEngine } from './server/csvEngine.js';
@@ -838,6 +837,8 @@ async function startServer() {
 
   // ==================== VITE MIDDLEWARE / SPA SERVING ====================
   if (process.env.NODE_ENV !== 'production') {
+    // Imported lazily so production builds don't need vite (a devDependency) installed.
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa'

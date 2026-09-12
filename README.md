@@ -29,7 +29,29 @@ bun run build   # vite build (frontend) + esbuild bundle (server -> dist/server.
 bun run start   # node dist/server.cjs, serves the built frontend + API
 ```
 
-On GCP (Cloud Run, GCE, App Engine, etc.) the attached service account is picked up automatically via Application Default Credentials — no key file needs to be deployed. That service account needs Firestore read/write access (e.g. the `Cloud Datastore User` / `Firebase Admin` IAM role) on the target project.
+### Cloud Run (recommended)
+
+`Dockerfile` and `cloudbuild.yaml` build a container image and deploy it to Cloud Run. Wire up continuous deployment once, from the target GCP project:
+
+```
+gcloud artifacts repositories create omnitrack --repository-format=docker --location=us-central1
+gcloud builds triggers create github \
+  --name=omnitrack-deploy \
+  --repo-owner=<your-github-owner> \
+  --repo-name=OmniTrack \
+  --branch-pattern="^main$" \
+  --build-config=cloudbuild.yaml
+```
+
+Every push to `main` then rebuilds and redeploys automatically. The Cloud Run service's runtime service account is picked up automatically via Application Default Credentials — no key file needs to be deployed — but it needs Firestore read/write access (the `Cloud Datastore User` / `roles/datastore.user` IAM role) on the target project:
+
+```
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --member="serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com" \
+  --role="roles/datastore.user"
+```
+
+**Important:** application state lives in the server process's memory (hydrated from Firestore on boot), so `cloudbuild.yaml` pins the service to exactly 1 instance (`--min-instances=1 --max-instances=1`). Do not raise `--max-instances` above 1 without first moving state out of process memory — multiple replicas would diverge and clobber each other's Firestore writes.
 
 **Important:** application state lives in the server process's memory (hydrated from Firestore on boot). Only run a single instance — running multiple replicas will cause them to diverge and overwrite each other's writes in Firestore.
 
