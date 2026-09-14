@@ -9,6 +9,7 @@ import {
   FileText,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   ArrowLeft,
   RefreshCw,
@@ -69,7 +70,9 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
   const [recentImports, setRecentImports] = useState<ImportJob[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [importCurrency, setImportCurrency] = useState<'USD' | 'LKR'>('USD');
+  // Read from the uploaded file when it states one; null means the user still has to pick.
+  const [importCurrency, setImportCurrency] = useState<string | null>(null);
+  const [currencySource, setCurrencySource] = useState<'column' | 'header' | null>(null);
 
   // Load clients & brands
   useEffect(() => {
@@ -240,6 +243,8 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
       const preview = await ApiService.previewCsv(rawCsv);
       setPreviewData(preview);
       setMappings(preview.suggested_mapping || {});
+      setImportCurrency(preview.detected_currency || null);
+      setCurrencySource(preview.detected_currency_source || null);
 
       // Auto-match campaigns if ids or names correspond
       const matches: Record<string, string> = {};
@@ -936,40 +941,6 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
               </div>
             </div>
 
-            {/* Currency Choice */}
-            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div>
-                <span className="text-xs font-bold text-slate-800">CSV Report Currency</span>
-                <p className="text-[11px] text-slate-500">
-                  Select the currency of the spend and budget figures inside this CSV file.
-                </p>
-              </div>
-              <div className="inline-flex rounded-lg p-1 bg-white border border-slate-200 shadow-2xs">
-                <button
-                  type="button"
-                  onClick={() => setImportCurrency('USD')}
-                  className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                    importCurrency === 'USD'
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  USD ($)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setImportCurrency('LKR')}
-                  className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                    importCurrency === 'LKR'
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  LKR (Rs.)
-                </button>
-              </div>
-            </div>
-
             {/* Drag and Drop Zone */}
             <div
               onDragOver={handleDragOver}
@@ -1028,6 +999,64 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                 <span>Change File</span>
               </button>
             </div>
+
+            {/* Currency: detected from the file, or asked for when the file does not say */}
+            {importCurrency ? (
+              <div className="p-3.5 rounded-xl bg-emerald-50/80 border border-emerald-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <span className="font-bold block text-emerald-900">
+                      Report currency detected: {importCurrency}
+                    </span>
+                    <p className="text-[11px] text-emerald-800 mt-0.5">
+                      {currencySource === 'column'
+                        ? "Read from the file's currency column."
+                        : currencySource === 'header'
+                        ? `Read from the spend column header (${mappings['spend'] || 'spend'}).`
+                        : 'Set manually for this import.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImportCurrency(null);
+                    setCurrencySource(null);
+                  }}
+                  className="text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 underline underline-offset-2 shrink-0 self-start sm:self-auto"
+                >
+                  Change
+                </button>
+              </div>
+            ) : (
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <span className="font-bold block text-amber-900">Set the report currency</span>
+                    <p className="text-[11px] text-amber-800 mt-0.5">
+                      This file does not state a single currency, so spend cannot be labelled automatically. Choose the currency of the figures inside it before ingesting.
+                    </p>
+                  </div>
+                </div>
+                <div className="inline-flex rounded-lg p-1 bg-white border border-amber-300 shadow-2xs shrink-0">
+                  {(['USD', 'LKR'] as const).map(code => (
+                    <button
+                      key={code}
+                      type="button"
+                      onClick={() => {
+                        setImportCurrency(code);
+                        setCurrencySource(null);
+                      }}
+                      className="px-3 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-all"
+                    >
+                      {code === 'USD' ? 'USD ($)' : 'LKR (Rs.)'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Direct to Unmapped Banner */}
             <div className="p-3.5 rounded-xl bg-indigo-50/80 border border-indigo-200/80 flex items-start gap-3">
@@ -1108,6 +1137,7 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                 onClick={() => handleExecuteImport(true)}
                 disabled={
                   isSubmitting ||
+                  !importCurrency ||
                   !mappings['report_date'] ||
                   (!mappings['platform_campaign_id'] && !mappings['campaign_name'] && !mappings['line_item_name'] && !mappings['ad_set_name']) ||
                   !mappings['spend']

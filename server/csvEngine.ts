@@ -28,6 +28,9 @@ export interface CsvPreviewResult {
   total_rows: number;
   preview_rows: Record<string, any>[];
   detected_platform?: PlatformType;
+  /** Currency read from the file itself; null when the file does not state one (or states several). */
+  detected_currency: string | null;
+  detected_currency_source: 'column' | 'header' | null;
   suggested_mapping: Record<string, string>;
   distinct_campaign_groups: DistinctCampaignGroup[];
   distinct_campaigns: {
@@ -176,7 +179,8 @@ export class CsvEngine {
       'conversion_value',
       'video_views',
       'campaign_status',
-      'objective'
+      'objective',
+      'currency'
     ];
 
     // Candidates are listed most-specific first. Two rules keep day-wise data
@@ -199,7 +203,8 @@ export class CsvEngine {
       conversion_value: ['purchases conversion value', 'conversion value', 'value', 'revenue'],
       video_views: ['3-second video plays', 'video views', 'views', 'video plays'],
       campaign_status: ['delivery status', 'campaign delivery', 'status', 'campaign status', 'state'],
-      objective: ['result type', 'objective', 'campaign objective']
+      objective: ['result type', 'objective', 'campaign objective'],
+      currency: ['currency', 'account currency', 'currency code']
     };
 
     // Matching is driven by candidate priority rather than by column order in
@@ -316,6 +321,33 @@ export class CsvEngine {
       adSet.conversions = (adSet.conversions || 0) + convVal;
     });
 
+    // Platforms state the currency in one of two places: an explicit column
+    // (TikTok's 'Currency') or inside the spend header (Meta's
+    // 'Amount spent (LKR)'). A file carrying several currencies is left for the
+    // user to resolve rather than guessed at.
+    let detected_currency: string | null = null;
+    let detected_currency_source: 'column' | 'header' | null = null;
+
+    const currencyHeader = suggested_mapping['currency'];
+    const distinctCurrencies = currencyHeader
+      ? new Set(
+          rows
+            .map(r => String(r[currencyHeader] ?? '').trim().toUpperCase())
+            .filter(v => /^[A-Z]{3}$/.test(v))
+        )
+      : new Set<string>();
+
+    if (distinctCurrencies.size === 1) {
+      detected_currency = [...distinctCurrencies][0];
+      detected_currency_source = 'column';
+    } else if (distinctCurrencies.size === 0 && suggested_mapping['spend']) {
+      const fromHeader = suggested_mapping['spend'].toUpperCase().match(/\(([A-Z]{3})\)/);
+      if (fromHeader) {
+        detected_currency = fromHeader[1];
+        detected_currency_source = 'header';
+      }
+    }
+
     const distinct_campaign_groups: DistinctCampaignGroup[] = Array.from(campaignGroupsMap.values()).map(g => ({
       csv_campaign_name: g.csv_campaign_name,
       rows_count: g.rows_count,
@@ -354,6 +386,8 @@ export class CsvEngine {
       total_rows: rows.length,
       preview_rows,
       detected_platform,
+      detected_currency,
+      detected_currency_source,
       suggested_mapping,
       distinct_campaign_groups,
       distinct_campaigns: flattenedItems,
