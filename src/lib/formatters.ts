@@ -62,6 +62,6 @@ export const formatPercent = (
   decimals = 1
 ): string => {
   if (val === null || val === undefined) return '0%';
-  const num = typeof val === 'number' ? val : parseNumber(val);
+  const num = typeof val === 'number' ? (isNaN(val) ? 0 : val) : parseNumber(val);
   return `${num.toFixed(decimals)}%`;
 };

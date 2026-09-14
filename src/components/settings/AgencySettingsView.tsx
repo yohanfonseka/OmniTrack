@@ -170,6 +170,25 @@ export const AgencySettingsView: React.FC = () => {
           <button
             type="button"
             onClick={async () => {
+              if (window.confirm('Are you sure you want to clear all platform data? This will clear all unmapped campaigns, daily metrics, and platform data source mappings across Firestore.')) {
+                try {
+                  const res = await ApiService.clearPlatformData();
+                  setSavedNote(res.message || 'Platform data cleared successfully.');
+                  window.dispatchEvent(new CustomEvent('refresh-omnitrack'));
+                  window.dispatchEvent(new CustomEvent('campaigns-updated'));
+                } catch (err: any) {
+                  alert(err.message || 'Failed to clear platform data');
+                }
+              }
+            }}
+            className="px-4 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-bold transition-colors flex items-center gap-2 cursor-pointer"
+          >
+            <span>Clear Platform Data Only</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={async () => {
               if (window.confirm('Are you sure you want to delete ALL data? This will clear all clients, brands, campaigns, line items, and metrics across Firestore to test from scratch.')) {
                 try {
                   const res = await ApiService.clearAllData();

@@ -9,6 +9,7 @@ import {
   CampaignLineItem,
   KpiMetricType
 } from '../../types';
+import { CampaignNameDisplay } from './CampaignNameDisplay';
 import {
   X,
   Link2,
@@ -29,7 +30,7 @@ interface MapCampaignModalProps {
   unmappedCampaign: UnmappedCampaign | null;
   isOpen: boolean;
   onClose: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (mappedId: string) => void;
 }
 
 export const MapCampaignModal: React.FC<MapCampaignModalProps> = ({
@@ -41,6 +42,7 @@ export const MapCampaignModal: React.FC<MapCampaignModalProps> = ({
   const { currentAgency, refreshUnmappedCount } = useAuth();
 
   const [mode, setMode] = useState<'existing' | 'new'>('existing');
+  const [campaignSearch, setCampaignSearch] = useState<string>('');
   const [clients, setClients] = useState<Client[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -83,30 +85,41 @@ export const MapCampaignModal: React.FC<MapCampaignModalProps> = ({
           ApiService.getLineItems(currentAgency.id)
         ]);
 
+        // ApiService.getCampaigns and getLineItems return calculated metrics wrappers
+        const extractedCampaigns: Campaign[] = (campList || []).map((cm: any) => cm.campaign || cm);
+        const extractedLineItems: CampaignLineItem[] = (lList || []).map((lm: any) => lm.line_item || lm);
+
         setClients(cList);
         setBrands(bList);
-        setCampaigns(campList);
-        setLineItems(lList);
+        setCampaigns(extractedCampaigns);
+        setLineItems(extractedLineItems);
 
         // Pre-fill smart defaults based on unmapped campaign
         if (unmappedCampaign) {
           // Detect client/brand if present
           let matchedClient = cList.find(c => c.id === unmappedCampaign.client_id);
+          if (!matchedClient && unmappedCampaign.client_name) {
+            matchedClient = cList.find(c => c.name.toLowerCase() === unmappedCampaign.client_name?.toLowerCase());
+          }
           if (!matchedClient && cList.length > 0) {
             // Check if name has hints
             matchedClient = cList.find(c =>
               unmappedCampaign.platform_campaign_name.toLowerCase().includes(c.name.toLowerCase()) ||
               (unmappedCampaign.platform_account_name && unmappedCampaign.platform_account_name.toLowerCase().includes(c.name.toLowerCase()))
-            ) || cList[0];
+            );
           }
 
           if (matchedClient) {
             setSelectedClientId(matchedClient.id);
             const clientBrands = bList.filter(b => b.client_id === matchedClient!.id);
-            const initialBrand = clientBrands[0] || bList[0];
-            if (initialBrand) {
-              setSelectedBrandId(initialBrand.id);
+            if (unmappedCampaign.brand_id) {
+              const matchedBrand = clientBrands.find(b => b.id === unmappedCampaign.brand_id);
+              if (matchedBrand) setSelectedBrandId(matchedBrand.id);
             }
+          } else {
+            // Leave blank so ALL campaigns across the agency are visible by default
+            setSelectedClientId('');
+            setSelectedBrandId('');
           }
 
           // Default new campaign values
@@ -138,6 +151,12 @@ export const MapCampaignModal: React.FC<MapCampaignModalProps> = ({
   const availableCampaigns = campaigns.filter(c => {
     if (selectedClientId && c.client_id !== selectedClientId) return false;
     if (selectedBrandId && c.brand_id !== selectedBrandId) return false;
+    if (campaignSearch.trim()) {
+      const q = campaignSearch.toLowerCase().trim();
+      const matchName = c.name.toLowerCase().includes(q);
+      const matchObj = c.objective?.toLowerCase().includes(q);
+      if (!matchName && !matchObj) return false;
+    }
     return true;
   });
 
@@ -150,7 +169,7 @@ export const MapCampaignModal: React.FC<MapCampaignModalProps> = ({
     } else {
       setSelectedCampaignId('');
     }
-  }, [selectedClientId, selectedBrandId, availableCampaigns]);
+  }, [availableCampaigns, selectedCampaignId]);
 
   // Line items for the selected campaign
   const availableLines = lineItems.filter(l => l.campaign_id === selectedCampaignId);
@@ -234,7 +253,7 @@ export const MapCampaignModal: React.FC<MapCampaignModalProps> = ({
       window.dispatchEvent(new CustomEvent('campaigns-updated'));
       await refreshUnmappedCount();
 
-      if (onSuccess) onSuccess();
+      if (onSuccess) onSuccess(unmappedCampaign.id);
       onClose();
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to map campaign');
@@ -286,36 +305,38 @@ export const MapCampaignModal: React.FC<MapCampaignModalProps> = ({
         </div>
 
         {/* Campaign Metrics Snapshot Card */}
-        <div className="px-6 py-4 bg-indigo-50/50 border-b border-indigo-100/60 flex flex-wrap items-center justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <span className="text-[11px] font-bold text-indigo-700 uppercase tracking-wide">
-              Platform Campaign Name
-            </span>
-            <p className="font-bold text-slate-900 text-sm truncate">
-              {unmappedCampaign.platform_campaign_name}
-            </p>
-            {unmappedCampaign.platform_account_name && (
-              <p className="text-[11px] text-slate-500 truncate">
-                Ad Account: {unmappedCampaign.platform_account_name} ({unmappedCampaign.platform_account_id})
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-4 text-right">
-            <div>
-              <span className="text-[10px] text-slate-500 uppercase block font-semibold">
-                Ingested Spend
-              </span>
-              <span className="text-sm font-extrabold text-slate-900">
-                {formatMoney(unmappedCampaign.total_spend, unmappedCampaign.currency)}
-              </span>
+        <div className="px-6 py-4 bg-slate-50/80 border-b border-slate-200">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <CampaignNameDisplay
+                rawName={unmappedCampaign.platform_campaign_name}
+                platformCampaignId={unmappedCampaign.platform_campaign_id}
+              />
+              {unmappedCampaign.platform_account_name && (
+                <p className="text-xs text-slate-500 mt-2 flex items-center gap-1.5">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Ad Account:</span>
+                  <span className="font-semibold text-slate-700">{unmappedCampaign.platform_account_name}</span>
+                  <span className="text-[11px] font-mono text-slate-400">({unmappedCampaign.platform_account_id})</span>
+                </p>
+              )}
             </div>
-            <div className="border-l border-indigo-200 pl-4">
-              <span className="text-[10px] text-slate-500 uppercase block font-semibold">
-                Activity
-              </span>
-              <span className="text-xs font-bold text-slate-700">
-                {formatNumber(unmappedCampaign.total_impressions)} imp · {formatNumber(unmappedCampaign.total_clicks)} clk
-              </span>
+            <div className="flex items-center gap-4 text-right bg-white p-3 rounded-xl border border-slate-200/90 shadow-2xs shrink-0 self-end sm:self-auto">
+              <div>
+                <span className="text-[10px] text-slate-400 uppercase block font-bold tracking-wider">
+                  Ingested Spend
+                </span>
+                <span className="text-sm font-extrabold text-slate-900">
+                  {formatMoney(unmappedCampaign.total_spend, unmappedCampaign.currency)}
+                </span>
+              </div>
+              <div className="border-l border-slate-200 pl-3">
+                <span className="text-[10px] text-slate-400 uppercase block font-bold tracking-wider">
+                  Activity
+                </span>
+                <span className="text-xs font-bold text-slate-700">
+                  {formatNumber(unmappedCampaign.total_impressions)} imp · {formatNumber(unmappedCampaign.total_clicks)} clk
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -324,6 +345,7 @@ export const MapCampaignModal: React.FC<MapCampaignModalProps> = ({
         <div className="px-6 pt-4 border-b border-slate-200 flex gap-2">
           <button
             type="button"
+            id="map-mode-existing-tab"
             onClick={() => setMode('existing')}
             className={`pb-3 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 ${
               mode === 'existing'
@@ -332,11 +354,19 @@ export const MapCampaignModal: React.FC<MapCampaignModalProps> = ({
             }`}
           >
             <Link2 className="w-3.5 h-3.5" />
-            Add to Existing Campaign
+            Attach to Existing Campaign ({campaigns.length})
           </button>
           <button
             type="button"
-            onClick={() => setMode('new')}
+            id="map-mode-new-tab"
+            onClick={() => {
+              setMode('new');
+              if (!selectedClientId && clients.length > 0) {
+                setSelectedClientId(clients[0].id);
+                const relatedBrands = brands.filter(b => b.client_id === clients[0].id);
+                if (relatedBrands.length > 0) setSelectedBrandId(relatedBrands[0].id);
+              }
+            }}
             className={`pb-3 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 ${
               mode === 'new'
                 ? 'border-indigo-600 text-indigo-600'
@@ -361,19 +391,20 @@ export const MapCampaignModal: React.FC<MapCampaignModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                Client Organization *
+                Client Organization {mode === 'new' ? '*' : '(Filter)'}
               </label>
               <select
+                id="map-client-select"
                 value={selectedClientId}
                 onChange={e => {
-                  setSelectedClientId(e.target.value);
-                  const relatedBrands = brands.filter(b => b.client_id === e.target.value);
-                  if (relatedBrands.length > 0) setSelectedBrandId(relatedBrands[0].id);
+                  const newClientId = e.target.value;
+                  setSelectedClientId(newClientId);
+                  setSelectedBrandId('');
                 }}
                 className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-medium text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                required
+                required={mode === 'new'}
               >
-                <option value="">— Select Client —</option>
+                <option value="">{mode === 'new' ? '— Select Client —' : '— All Clients (Show All Campaigns) —'}</option>
                 {clients.map(c => (
                   <option key={c.id} value={c.id}>
                     {c.name} ({c.currency})
@@ -384,9 +415,10 @@ export const MapCampaignModal: React.FC<MapCampaignModalProps> = ({
 
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                Brand / Vertical
+                Brand / Vertical {mode === 'new' ? '' : '(Filter)'}
               </label>
               <select
+                id="map-brand-select"
                 value={selectedBrandId}
                 onChange={e => setSelectedBrandId(e.target.value)}
                 className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-medium text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
@@ -410,32 +442,86 @@ export const MapCampaignModal: React.FC<MapCampaignModalProps> = ({
                     Target Campaign *
                   </label>
                   <span className="text-[11px] text-slate-500">
-                    {availableCampaigns.length} campaigns available
+                    {availableCampaigns.length} of {campaigns.length} campaigns
                   </span>
                 </div>
+
+                {/* Campaign Quick Search Filter if more than 3 campaigns */}
+                {campaigns.length > 3 && (
+                  <div className="mb-2">
+                    <input
+                      type="text"
+                      id="target-campaign-search-input"
+                      value={campaignSearch}
+                      onChange={e => setCampaignSearch(e.target.value)}
+                      placeholder="Search campaigns by name or objective..."
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none placeholder:text-slate-400"
+                    />
+                  </div>
+                )}
+
                 {availableCampaigns.length === 0 ? (
-                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs flex items-center justify-between">
-                    <span>No campaigns found for this client/brand.</span>
-                    <button
-                      type="button"
-                      onClick={() => setMode('new')}
-                      className="font-bold underline text-amber-900 ml-2"
-                    >
-                      Create one now
-                    </button>
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <span>
+                      {campaigns.length === 0
+                        ? 'No campaigns exist in your agency yet.'
+                        : 'No campaigns match the current client/brand filter or search.'}
+                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {(selectedClientId || selectedBrandId || campaignSearch) && (
+                        <button
+                          type="button"
+                          id="clear-campaign-filters-btn"
+                          onClick={() => {
+                            setSelectedClientId('');
+                            setSelectedBrandId('');
+                            setCampaignSearch('');
+                          }}
+                          className="font-bold underline text-amber-900 text-xs cursor-pointer"
+                        >
+                          Show All Campaigns ({campaigns.length})
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        id="switch-to-new-campaign-btn"
+                        onClick={() => {
+                          setMode('new');
+                          if (!selectedClientId && clients.length > 0) setSelectedClientId(clients[0].id);
+                        }}
+                        className="font-bold underline text-indigo-700 text-xs cursor-pointer ml-1"
+                      >
+                        + Create New Campaign
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <select
+                    id="target-campaign-select"
                     value={selectedCampaignId}
-                    onChange={e => setSelectedCampaignId(e.target.value)}
+                    onChange={e => {
+                      const newId = e.target.value;
+                      setSelectedCampaignId(newId);
+                      const matched = campaigns.find(c => c.id === newId);
+                      if (matched) {
+                        if (matched.client_id && !selectedClientId) setSelectedClientId(matched.client_id);
+                        if (matched.brand_id && !selectedBrandId) setSelectedBrandId(matched.brand_id);
+                      }
+                    }}
                     className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-xs font-medium text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                     required
                   >
-                    {availableCampaigns.map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} (Budget: {c.currency} {c.total_budget.toLocaleString()} · {c.status.toUpperCase()})
-                      </option>
-                    ))}
+                    <option value="">— Select Target Campaign —</option>
+                    {availableCampaigns.map(c => {
+                      const client = clients.find(cl => cl.id === c.client_id);
+                      const brand = brands.find(b => b.id === c.brand_id);
+                      const contextTag = client ? `[${client.name}${brand ? ` > ${brand.name}` : ''}] ` : '';
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {contextTag}{c.name} · {c.currency} {c.total_budget?.toLocaleString()} ({c.status?.toUpperCase()})
+                        </option>
+                      );
+                    })}
                   </select>
                 )}
               </div>

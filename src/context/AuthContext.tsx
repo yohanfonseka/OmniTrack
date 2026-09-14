@@ -108,9 +108,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (currentAgency) {
       refreshUnmappedCount();
-      FirestoreService.syncAllToFirestore(currentAgency.id).catch(err => {
-        console.warn('[Firestore] Auto background sync:', err);
-      });
     }
   }, [currentAgency?.id, refreshUnmappedCount]);
 

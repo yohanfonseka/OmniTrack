@@ -22,7 +22,10 @@ import {
   Plus,
   Wand2,
   FolderPlus,
-  ShieldCheck
+  ShieldCheck,
+  Folder,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 
 interface CsvImportWizardProps {
@@ -44,6 +47,7 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
 
   const [selectedClientId, setSelectedClientId] = useState<string>('');
   const [selectedBrandId, setSelectedBrandId] = useState<string>('');
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
   const [selectedPlatform, setSelectedPlatform] = useState<PlatformType>('meta');
 
   // CSV Content state
@@ -56,6 +60,7 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
 
   // Campaign matches (platform_campaign_id -> line_item_id or camp:campaign_id or create_new:name)
   const [campaignMatches, setCampaignMatches] = useState<Record<string, string>>({});
+  const [collapsedCampaigns, setCollapsedCampaigns] = useState<Record<string, boolean>>({});
   const [showCreateCampaignModal, setShowCreateCampaignModal] = useState<boolean>(false);
 
   // Background Processing state
@@ -257,78 +262,180 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
   const handleProceedToMatching = () => {
     setErrorMsg(null);
     const dateCol = mappings['report_date'];
-    const idCol = mappings['platform_campaign_id'] || mappings['campaign_name'];
-    const nameCol = mappings['campaign_name'] || mappings['platform_campaign_id'];
+    const campCol = mappings['campaign_name'] || mappings['platform_campaign_id'];
+    const lineCol = mappings['line_item_name'] || mappings['ad_set_name'];
+    const idCol = mappings['platform_campaign_id'];
     const spendCol = mappings['spend'];
 
-    if (!dateCol || !idCol || !spendCol) {
-      setErrorMsg('Please map Report Date, Campaign ID (or Campaign Name), and Spend Amount.');
+    if (!dateCol || (!campCol && !lineCol && !idCol) || !spendCol) {
+      setErrorMsg('Please map Report Date, Campaign Name (or Line Item Name), and Spend Amount.');
       return;
     }
 
     try {
       const parsed = Papa.parse(csvContent.trim(), { header: true, skipEmptyLines: true });
       const rows = parsed.data as Record<string, any>[];
-      const campMap = new Map<string, { name: string; count: number }>();
+
+      const parseRowVal = (val: any) => {
+        if (val === undefined || val === null || val === '') return 0;
+        const clean = String(val).replace(/[^0-9.-]/g, '');
+        const num = parseFloat(clean);
+        return isNaN(num) ? 0 : num;
+      };
+
+      // Hierarchical grouping by Campaign (Col A) -> Ad Set / Line Item (Col B)
+      const campaignGroupsMap = new Map<string, {
+        csv_campaign_name: string;
+        rows_count: number;
+        total_spend: number;
+        ad_sets: Map<string, {
+          item_key: string;
+          csv_campaign_name: string;
+          csv_ad_set_name: string;
+          platform_campaign_id: string;
+          rows_count: number;
+          total_spend: number;
+        }>;
+      }>();
 
       rows.forEach((row, idx) => {
+        const rawCamp = campCol ? String(row[campCol] || '').trim() : '';
+        const rawAdSet = lineCol ? String(row[lineCol] || '').trim() : '';
         const rawId = idCol ? String(row[idCol] || '').trim() : '';
-        const rawName = nameCol ? String(row[nameCol] || '').trim() : '';
-        const id = rawId || rawName || `campaign_${idx + 1}`;
-        const name = rawName || rawId || 'Unnamed Campaign';
-        if (id) {
-          const curr = campMap.get(id) || { name, count: 0 };
-          curr.count += 1;
-          campMap.set(id, curr);
+        const spendVal = spendCol ? parseRowVal(row[spendCol]) : 0;
+
+        const csvCampName = rawCamp || (rawAdSet ? 'General Campaign' : `Campaign ${idx + 1}`);
+        const csvAdSetName = rawAdSet || (rawCamp ? `Ad Set ${idx + 1}` : (rawId || `Line Item ${idx + 1}`));
+        const itemKey = rawId || `${csvCampName}:::${csvAdSetName}`;
+
+        let group = campaignGroupsMap.get(csvCampName);
+        if (!group) {
+          group = {
+            csv_campaign_name: csvCampName,
+            rows_count: 0,
+            total_spend: 0,
+            ad_sets: new Map()
+          };
+          campaignGroupsMap.set(csvCampName, group);
         }
+
+        group.rows_count += 1;
+        group.total_spend += spendVal;
+
+        let as = group.ad_sets.get(csvAdSetName);
+        if (!as) {
+          as = {
+            item_key: itemKey,
+            csv_campaign_name: csvCampName,
+            csv_ad_set_name: csvAdSetName,
+            platform_campaign_id: rawId || itemKey,
+            rows_count: 0,
+            total_spend: 0
+          };
+          group.ad_sets.set(csvAdSetName, as);
+        }
+        as.rows_count += 1;
+        as.total_spend += spendVal;
       });
 
-      const distinct = Array.from(campMap.entries()).map(([id, info]) => ({
-        platform_campaign_id: id,
-        campaign_name: info.name,
-        rows_count: info.count
+      const distinctGroups = Array.from(campaignGroupsMap.values()).map(g => ({
+        csv_campaign_name: g.csv_campaign_name,
+        rows_count: g.rows_count,
+        total_spend: Math.round(g.total_spend * 100) / 100,
+        ad_sets: Array.from(g.ad_sets.values()).map(as => ({
+          ...as,
+          total_spend: Math.round(as.total_spend * 100) / 100
+        }))
       }));
 
-      if (distinct.length === 0) {
-        setErrorMsg('No campaigns found in CSV with current column selection.');
+      // Flattened list for flat preview
+      const distinctFlat: any[] = [];
+      distinctGroups.forEach(g => {
+        g.ad_sets.forEach(as => {
+          distinctFlat.push({
+            platform_campaign_id: as.item_key,
+            campaign_name: `${as.csv_campaign_name} › ${as.csv_ad_set_name}`,
+            csv_campaign_name: as.csv_campaign_name,
+            csv_ad_set_name: as.csv_ad_set_name,
+            rows_count: as.rows_count,
+            total_spend: as.total_spend
+          });
+        });
+      });
+
+      if (distinctFlat.length === 0) {
+        setErrorMsg('No campaigns or line items found in CSV with current column selection.');
         return;
       }
 
       setPreviewData((prev: any) => ({
         ...prev,
-        distinct_campaigns: distinct
+        distinct_campaign_groups: distinctGroups,
+        distinct_campaigns: distinctFlat
       }));
 
-      // Update matches for newly extracted campaigns
+      // Set matches for all extracted items
       const updatedMatches: Record<string, string> = { ...campaignMatches };
-      distinct.forEach(dc => {
-        if (updatedMatches[dc.platform_campaign_id]) return;
 
-        // 1. Line items
-        const foundLine = lineItems.find(
-          l =>
-            (l.platform_campaign_id && l.platform_campaign_id === dc.platform_campaign_id) ||
-            l.name.toLowerCase().includes(dc.campaign_name.toLowerCase()) ||
-            dc.campaign_name.toLowerCase().includes(l.name.toLowerCase())
-        );
-        if (foundLine) {
-          updatedMatches[dc.platform_campaign_id] = `line:${foundLine.id}`;
-          return;
-        }
-
-        // 2. Campaigns
+      distinctGroups.forEach(g => {
+        // Find existing campaign by name
         const foundCamp = campaigns.find(
           c =>
-            c.name.toLowerCase().includes(dc.campaign_name.toLowerCase()) ||
-            dc.campaign_name.toLowerCase().includes(c.name.toLowerCase())
+            c.name.toLowerCase().includes(g.csv_campaign_name.toLowerCase()) ||
+            g.csv_campaign_name.toLowerCase().includes(c.name.toLowerCase())
         );
-        if (foundCamp) {
-          updatedMatches[dc.platform_campaign_id] = `camp:${foundCamp.id}`;
-          return;
+
+        if (foundCamp && !updatedMatches[g.csv_campaign_name]) {
+          updatedMatches[g.csv_campaign_name] = `camp:${foundCamp.id}`;
+        } else if (!updatedMatches[g.csv_campaign_name]) {
+          updatedMatches[g.csv_campaign_name] = `create_new:${g.csv_campaign_name}`;
         }
 
-        // If not identified, automatically default to unallocated (unmapped)
-        updatedMatches[dc.platform_campaign_id] = 'unmapped';
+        g.ad_sets.forEach(as => {
+          if (updatedMatches[as.item_key]) return;
+
+          // 1. Direct line item match
+          const foundLine = lineItems.find(
+            l =>
+              (l.platform_campaign_id && (l.platform_campaign_id === as.platform_campaign_id || l.platform_campaign_id === as.item_key)) ||
+              l.name.toLowerCase().includes(as.csv_ad_set_name.toLowerCase()) ||
+              as.csv_ad_set_name.toLowerCase().includes(l.name.toLowerCase())
+          );
+          if (foundLine) {
+            updatedMatches[as.item_key] = `line:${foundLine.id}`;
+            updatedMatches[as.csv_ad_set_name] = `line:${foundLine.id}`;
+            return;
+          }
+
+          // 2. Existing campaign match
+          if (foundCamp) {
+            const lineInCamp = lineItems.find(
+              l =>
+                l.campaign_id === foundCamp.id &&
+                (l.name.toLowerCase().includes(as.csv_ad_set_name.toLowerCase()) ||
+                  as.csv_ad_set_name.toLowerCase().includes(l.name.toLowerCase()))
+            );
+            if (lineInCamp) {
+              updatedMatches[as.item_key] = `line:${lineInCamp.id}`;
+              updatedMatches[as.csv_ad_set_name] = `line:${lineInCamp.id}`;
+              return;
+            }
+            updatedMatches[as.item_key] = `camp:${foundCamp.id}`;
+            updatedMatches[as.csv_ad_set_name] = `camp:${foundCamp.id}`;
+            return;
+          }
+
+          // 3. User selected target campaign in wizard
+          if (selectedCampaignId && selectedCampaignId !== 'auto_create') {
+            updatedMatches[as.item_key] = `camp:${selectedCampaignId}`;
+            updatedMatches[as.csv_ad_set_name] = `camp:${selectedCampaignId}`;
+            return;
+          }
+
+          // 4. Default: Auto-create campaign with this campaign name
+          updatedMatches[as.item_key] = `create_new:${as.csv_campaign_name}`;
+          updatedMatches[as.csv_ad_set_name] = `create_new:${as.csv_campaign_name}`;
+        });
       });
 
       setCampaignMatches(updatedMatches);
@@ -338,35 +445,125 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
     }
   };
 
-  // Helper to re-match all distinct campaigns using smart fuzzy heuristic
+  // Helper to toggle campaign card collapse
+  const toggleCollapseCampaign = (campName: string) => {
+    setCollapsedCampaigns(prev => ({ ...prev, [campName]: !prev[campName] }));
+  };
+
+  // Helper to set all ad sets under a specific campaign to a target
+  const handleSetCampaignTarget = (csvCampName: string, targetVal: string) => {
+    const updated = { ...campaignMatches };
+    updated[csvCampName] = targetVal;
+    const grp = previewData?.distinct_campaign_groups?.find((g: any) => g.csv_campaign_name === csvCampName);
+    if (grp) {
+      grp.ad_sets.forEach((as: any) => {
+        updated[as.item_key] = targetVal;
+        updated[as.csv_ad_set_name] = targetVal;
+      });
+    }
+    setCampaignMatches(updated);
+  };
+
+  // Helper to re-match all distinct campaigns and ad sets using smart fuzzy heuristic
   const handleAutoMatchByName = () => {
     if (!previewData) return;
     const updated: Record<string, string> = {};
-    previewData.distinct_campaigns.forEach((dc: any) => {
-      // Line item match
-      const foundLine = lineItems.find(
-        l =>
-          (l.platform_campaign_id && l.platform_campaign_id === dc.platform_campaign_id) ||
-          l.name.toLowerCase().includes(dc.campaign_name.toLowerCase()) ||
-          dc.campaign_name.toLowerCase().includes(l.name.toLowerCase())
-      );
-      if (foundLine) {
-        updated[dc.platform_campaign_id] = `line:${foundLine.id}`;
-        return;
-      }
-      // Campaign match
-      const foundCamp = campaigns.find(
-        c =>
-          c.name.toLowerCase().includes(dc.campaign_name.toLowerCase()) ||
-          dc.campaign_name.toLowerCase().includes(c.name.toLowerCase())
-      );
-      if (foundCamp) {
-        updated[dc.platform_campaign_id] = `camp:${foundCamp.id}`;
-        return;
-      }
-      // Fallback: If not identified, automatically route to unallocated
-      updated[dc.platform_campaign_id] = 'unmapped';
-    });
+
+    if (previewData.distinct_campaign_groups && previewData.distinct_campaign_groups.length > 0) {
+      previewData.distinct_campaign_groups.forEach((g: any) => {
+        const foundCamp = campaigns.find(
+          c =>
+            c.name.toLowerCase().includes(g.csv_campaign_name.toLowerCase()) ||
+            g.csv_campaign_name.toLowerCase().includes(c.name.toLowerCase())
+        );
+
+        if (foundCamp) {
+          updated[g.csv_campaign_name] = `camp:${foundCamp.id}`;
+        } else {
+          updated[g.csv_campaign_name] = `create_new:${g.csv_campaign_name}`;
+        }
+
+        g.ad_sets.forEach((as: any) => {
+          const foundLine = lineItems.find(
+            l =>
+              (l.platform_campaign_id && (l.platform_campaign_id === as.platform_campaign_id || l.platform_campaign_id === as.item_key)) ||
+              l.name.toLowerCase().includes(as.csv_ad_set_name.toLowerCase()) ||
+              as.csv_ad_set_name.toLowerCase().includes(l.name.toLowerCase())
+          );
+          if (foundLine) {
+            updated[as.item_key] = `line:${foundLine.id}`;
+            updated[as.csv_ad_set_name] = `line:${foundLine.id}`;
+            return;
+          }
+
+          if (foundCamp) {
+            const lineInCamp = lineItems.find(
+              l =>
+                l.campaign_id === foundCamp.id &&
+                (l.name.toLowerCase().includes(as.csv_ad_set_name.toLowerCase()) ||
+                  as.csv_ad_set_name.toLowerCase().includes(l.name.toLowerCase()))
+            );
+            if (lineInCamp) {
+              updated[as.item_key] = `line:${lineInCamp.id}`;
+              updated[as.csv_ad_set_name] = `line:${lineInCamp.id}`;
+              return;
+            }
+            updated[as.item_key] = `camp:${foundCamp.id}`;
+            updated[as.csv_ad_set_name] = `camp:${foundCamp.id}`;
+            return;
+          }
+
+          updated[as.item_key] = `create_new:${as.csv_campaign_name}`;
+          updated[as.csv_ad_set_name] = `create_new:${as.csv_campaign_name}`;
+        });
+      });
+    } else if (previewData.distinct_campaigns) {
+      previewData.distinct_campaigns.forEach((dc: any) => {
+        const foundLine = lineItems.find(
+          l =>
+            (l.platform_campaign_id && l.platform_campaign_id === dc.platform_campaign_id) ||
+            l.name.toLowerCase().includes(dc.campaign_name.toLowerCase()) ||
+            dc.campaign_name.toLowerCase().includes(l.name.toLowerCase())
+        );
+        if (foundLine) {
+          updated[dc.platform_campaign_id] = `line:${foundLine.id}`;
+          return;
+        }
+        const foundCamp = campaigns.find(
+          c =>
+            c.name.toLowerCase().includes(dc.campaign_name.toLowerCase()) ||
+            dc.campaign_name.toLowerCase().includes(c.name.toLowerCase())
+        );
+        if (foundCamp) {
+          updated[dc.platform_campaign_id] = `camp:${foundCamp.id}`;
+          return;
+        }
+        updated[dc.platform_campaign_id] = 'unmapped';
+      });
+    }
+
+    setCampaignMatches(updated);
+  };
+
+  // Helper to set all CSV lines to create/map as line items in the chosen campaign
+  const handleAutoCreateAllAsLineItems = (campId?: string) => {
+    const targetId = campId || selectedCampaignId;
+    if (!previewData || !targetId || targetId === 'auto_create') return;
+    const updated = { ...campaignMatches };
+    if (previewData.distinct_campaign_groups) {
+      previewData.distinct_campaign_groups.forEach((g: any) => {
+        updated[g.csv_campaign_name] = `camp:${targetId}`;
+        g.ad_sets.forEach((as: any) => {
+          updated[as.item_key] = `camp:${targetId}`;
+          updated[as.csv_ad_set_name] = `camp:${targetId}`;
+        });
+      });
+    }
+    if (previewData.distinct_campaigns) {
+      previewData.distinct_campaigns.forEach((dc: any) => {
+        updated[dc.platform_campaign_id] = `camp:${targetId}`;
+      });
+    }
     setCampaignMatches(updated);
   };
 
@@ -374,11 +571,28 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
   const handleAutoCreateMissingCampaigns = () => {
     if (!previewData) return;
     const updated = { ...campaignMatches };
-    previewData.distinct_campaigns.forEach((dc: any) => {
-      if (!updated[dc.platform_campaign_id] || updated[dc.platform_campaign_id] === '') {
-        updated[dc.platform_campaign_id] = `create_new:${dc.campaign_name}`;
-      }
-    });
+    if (previewData.distinct_campaign_groups) {
+      previewData.distinct_campaign_groups.forEach((g: any) => {
+        const cur = updated[g.csv_campaign_name];
+        if (!cur || cur === 'unmapped') {
+          updated[g.csv_campaign_name] = `create_new:${g.csv_campaign_name}`;
+        }
+        g.ad_sets.forEach((as: any) => {
+          const asCur = updated[as.item_key];
+          if (!asCur || asCur === 'unmapped') {
+            updated[as.item_key] = `create_new:${as.csv_campaign_name}`;
+            updated[as.csv_ad_set_name] = `create_new:${as.csv_campaign_name}`;
+          }
+        });
+      });
+    }
+    if (previewData.distinct_campaigns) {
+      previewData.distinct_campaigns.forEach((dc: any) => {
+        if (!updated[dc.platform_campaign_id] || updated[dc.platform_campaign_id] === '' || updated[dc.platform_campaign_id] === 'unmapped') {
+          updated[dc.platform_campaign_id] = `create_new:${dc.campaign_name}`;
+        }
+      });
+    }
     setCampaignMatches(updated);
   };
 
@@ -386,16 +600,31 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
   const handleSetAllUnmatchedToUnmapped = () => {
     if (!previewData) return;
     const updated = { ...campaignMatches };
-    previewData.distinct_campaigns.forEach((dc: any) => {
-      if (!updated[dc.platform_campaign_id] || updated[dc.platform_campaign_id] === '') {
-        updated[dc.platform_campaign_id] = 'unmapped';
-      }
-    });
+    if (previewData.distinct_campaign_groups) {
+      previewData.distinct_campaign_groups.forEach((g: any) => {
+        if (!updated[g.csv_campaign_name]) {
+          updated[g.csv_campaign_name] = 'unmapped';
+        }
+        g.ad_sets.forEach((as: any) => {
+          if (!updated[as.item_key]) {
+            updated[as.item_key] = 'unmapped';
+            updated[as.csv_ad_set_name] = 'unmapped';
+          }
+        });
+      });
+    }
+    if (previewData.distinct_campaigns) {
+      previewData.distinct_campaigns.forEach((dc: any) => {
+        if (!updated[dc.platform_campaign_id] || updated[dc.platform_campaign_id] === '') {
+          updated[dc.platform_campaign_id] = 'unmapped';
+        }
+      });
+    }
     setCampaignMatches(updated);
   };
 
-  // Execute Background Import
-  const handleExecuteImport = async () => {
+  // Execute Background Import - Direct to Unmapped Campaigns
+  const handleExecuteImport = async (directToUnmapped = true) => {
     if (!currentAgency) return;
     setIsSubmitting(true);
     setErrorMsg(null);
@@ -403,29 +632,6 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
     const targetClient = clients.find(c => c.id === selectedClientId);
 
     try {
-      // Resolve any create_new requests first
-      const finalMatches: Record<string, string> = {};
-      for (const [csvId, rawVal] of Object.entries(campaignMatches)) {
-        const targetVal = String(rawVal || '');
-        if (targetVal.startsWith('create_new:')) {
-          const campName = targetVal.replace('create_new:', '').trim() || 'Imported Campaign';
-          const newCamp = await ApiService.createCampaign(currentAgency.id, {
-            client_id: selectedClientId,
-            brand_id: selectedBrandId,
-            name: campName,
-            description: `Auto-created during CSV import of ${fileName || 'CSV'}`,
-            objective: 'Conversions',
-            start_date: '2026-09-01',
-            end_date: '2026-09-30',
-            total_budget: 350000,
-            currency: targetClient?.currency || 'LKR'
-          });
-          finalMatches[csvId] = `camp:${newCamp.id}`;
-        } else {
-          finalMatches[csvId] = targetVal;
-        }
-      }
-
       // Ensure platform_campaign_id and campaign_name are aligned in column_mapping
       const finalMapping = { ...mappings };
       if (!finalMapping['platform_campaign_id'] && finalMapping['campaign_name']) {
@@ -438,16 +644,18 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
       const job = await ApiService.executeImport(currentAgency.id, {
         client_id: selectedClientId,
         brand_id: selectedBrandId,
+        campaign_id: selectedCampaignId && selectedCampaignId !== 'auto_create' ? selectedCampaignId : undefined,
         platform: selectedPlatform,
         file_name: fileName || `${selectedPlatform}_import.csv`,
         csv_content: csvContent,
         column_mapping: finalMapping,
-        campaign_matches: finalMatches,
-        currency: importCurrency || targetClient?.currency || 'LKR'
+        campaign_matches: {},
+        currency: importCurrency || targetClient?.currency || 'LKR',
+        direct_to_unmapped: directToUnmapped
       });
 
       setImportJob(job);
-      setStep(5); // Summary / Monitoring step
+      setStep(4); // Summary / Ingestion step
 
       // Poll until completed
       const interval = setInterval(async () => {
@@ -461,7 +669,14 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
               setIsSubmitting(false);
               loadRecentImports();
               loadCampaigns();
+              window.dispatchEvent(new CustomEvent('refresh-omnitrack'));
+              window.dispatchEvent(new CustomEvent('unmapped-campaigns-updated'));
               if (onImportComplete) onImportComplete();
+              if (directToUnmapped && onNavigateToUnmapped) {
+                setTimeout(() => {
+                  onNavigateToUnmapped();
+                }, 900);
+              }
             }
           }
         } catch {
@@ -475,10 +690,12 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
   };
 
   const normalizedRequiredFields = [
-    { key: 'report_date', label: 'Report Date', required: true },
-    { key: 'platform_campaign_id', label: 'Campaign ID (or Name)', required: false },
-    { key: 'campaign_name', label: 'Campaign Name', required: false },
+    { key: 'report_date', label: 'Report Date / Day', required: true },
+    { key: 'campaign_name', label: 'Campaign Name (Column A in Meta CSV)', required: false },
+    { key: 'line_item_name', label: 'Line Item / Ad Set Name (Column B in Meta CSV)', required: false },
+    { key: 'platform_campaign_id', label: 'Platform ID (Campaign / Ad Set ID)', required: false },
     { key: 'spend', label: 'Spend Amount', required: true },
+    { key: 'budget', label: 'Budget Amount (Optional)', required: false },
     { key: 'impressions', label: 'Impressions', required: false },
     { key: 'reach', label: 'Reach', required: false },
     { key: 'clicks', label: 'Clicks', required: false },
@@ -521,23 +738,15 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                 step === 3 ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
               }`}
             >
-              3. Map
+              3. Review & Ingest
             </span>
             <span className="text-slate-300">→</span>
             <span
               className={`px-2.5 py-1 rounded-md font-semibold ${
-                step === 4 ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
+                step === 4 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
               }`}
             >
-              4. Match
-            </span>
-            <span className="text-slate-300">→</span>
-            <span
-              className={`px-2.5 py-1 rounded-md font-semibold ${
-                step === 5 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
-              }`}
-            >
-              5. Summary
+              4. Ingest to Unmapped
             </span>
           </div>
         </div>
@@ -552,7 +761,7 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
         {/* STEP 1: Select Hierarchy & Platform */}
         {step === 1 && (
           <div className="mt-6 space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">1. Target Client</label>
                 <select
@@ -584,7 +793,24 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">3. Source Platform</label>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">3. Target Campaign</label>
+                <select
+                  value={selectedCampaignId}
+                  onChange={e => setSelectedCampaignId(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                >
+                  <option value="">— Direct to Unmapped Campaigns (Default) —</option>
+                  <option value="auto_create">+ Create New Campaign for this CSV</option>
+                  {campaigns.map(c => (
+                    <option key={c.id} value={c.id}>
+                      Attribute to: {c.name} ({c.currency})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">4. Source Platform</label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -611,6 +837,19 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                     <span>TikTok Ads</span>
                   </button>
                 </div>
+              </div>
+            </div>
+
+            {/* Note about Direct to Unmapped Workflow */}
+            <div className="p-3.5 rounded-xl bg-indigo-50/70 border border-indigo-100 flex items-start gap-3 text-xs text-indigo-950">
+              <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold block text-indigo-900 mb-0.5">
+                  Direct Ingestion to Unmapped Campaigns
+                </span>
+                <span className="text-indigo-800/90 leading-relaxed">
+                  Campaign matching and manual alignment steps are omitted. Once your CSV file is uploaded, all campaigns and ad sets are sent directly into the <strong>Unmapped Campaigns</strong> queue. You can assign, create campaigns, or link them anytime.
+                </span>
               </div>
             </div>
 
@@ -746,7 +985,10 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
           <div className="mt-6 space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 uppercase">3. Preview & Column Mapping</h3>
+                <h3 className="text-sm font-bold text-slate-900 uppercase">3. Review Column Mapping & Ingest</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Confirm mapped columns. All line items will be ingested directly into Unmapped Campaigns.
+                </p>
               </div>
               <button
                 onClick={() => setStep(2)}
@@ -755,6 +997,19 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                 <ArrowLeft className="w-3 h-3" />
                 <span>Change File</span>
               </button>
+            </div>
+
+            {/* Direct to Unmapped Banner */}
+            <div className="p-3.5 rounded-xl bg-indigo-50/80 border border-indigo-200/80 flex items-start gap-3">
+              <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+              <div className="text-xs text-indigo-950">
+                <span className="font-bold block text-indigo-900">
+                  Direct Ingestion to Unmapped Campaigns
+                </span>
+                <p className="text-[11px] text-indigo-800 mt-0.5 leading-relaxed">
+                  Campaign matching has been omitted. Confirm the column mappings below and click <strong>Upload & Send Directly to Unmapped Campaigns</strong>. All rows will be safely collected in your unmapped queue with deduplication guaranteed.
+                </p>
+              </div>
             </div>
 
             {/* Column Mapping Grid */}
@@ -812,48 +1067,82 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
               </div>
             </div>
 
-            <div className="flex justify-between pt-4 border-t border-slate-100">
+            <div className="flex justify-between items-center pt-4 border-t border-slate-100">
               <button
                 onClick={() => setStep(2)}
                 className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50"
               >
-                Back
+                Back to Upload
               </button>
               <button
-                onClick={handleProceedToMatching}
-                disabled={!mappings['report_date'] || (!mappings['platform_campaign_id'] && !mappings['campaign_name']) || !mappings['spend']}
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 disabled:opacity-50 shadow-xs"
+                onClick={() => handleExecuteImport(true)}
+                disabled={
+                  isSubmitting ||
+                  !mappings['report_date'] ||
+                  (!mappings['platform_campaign_id'] && !mappings['campaign_name'] && !mappings['line_item_name'] && !mappings['ad_set_name']) ||
+                  !mappings['spend']
+                }
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold disabled:opacity-50 shadow-xs transition-all cursor-pointer"
               >
-                <span>Proceed to Campaign Matching</span>
-                <ArrowRight className="w-3.5 h-3.5" />
+                {isSubmitting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Ingesting to Unmapped Campaigns...</span>
+                  </>
+                ) : (
+                  <>
+                    <UploadCloud className="w-4 h-4" />
+                    <span>Upload & Send Directly to Unmapped Campaigns</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </>
+                )}
               </button>
             </div>
           </div>
         )}
 
-        {/* STEP 4: Match Uploaded Platform Campaigns to Campaigns / Line Items */}
-        {step === 4 && previewData && (
+        {/* STEP 4: Match Uploaded Platform Campaigns / Line Items (Omitted per user request) */}
+        {false && previewData && (
           <div className="mt-6 space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-100">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 uppercase">4. Match Uploaded Data to Campaigns</h3>
-                <div className="flex items-center gap-2 mt-1">
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
+                  4. Map CSV Lines to Campaign Line Items
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Each line on a CSV is equal to a line item in a campaign.
+                </p>
+                <div className="flex items-center gap-2 mt-2">
                   {(() => {
-                    const total = previewData.distinct_campaigns.length;
-                    const matched = previewData.distinct_campaigns.filter(
-                      (dc: any) => campaignMatches[dc.platform_campaign_id] && campaignMatches[dc.platform_campaign_id] !== ''
-                    ).length;
+                    const hasGroups = previewData.distinct_campaign_groups && previewData.distinct_campaign_groups.length > 0;
+                    const total = hasGroups
+                      ? previewData.distinct_campaign_groups.reduce((acc: number, g: any) => acc + g.ad_sets.length, 0)
+                      : previewData.distinct_campaigns.length;
+                    const matched = hasGroups
+                      ? previewData.distinct_campaign_groups.reduce((acc: number, g: any) => {
+                          const campTarget = campaignMatches[g.csv_campaign_name];
+                          const mCount = g.ad_sets.filter((as: any) => {
+                            const m = campaignMatches[as.item_key] || campaignMatches[as.csv_ad_set_name] || campTarget;
+                            return m && m !== '' && m !== 'unmapped';
+                          }).length;
+                          return acc + mCount;
+                        }, 0)
+                      : previewData.distinct_campaigns.filter(
+                          (dc: any) => campaignMatches[dc.platform_campaign_id] && campaignMatches[dc.platform_campaign_id] !== '' && campaignMatches[dc.platform_campaign_id] !== 'unmapped'
+                        ).length;
                     const allDone = total > 0 && matched === total;
                     return (
                       <span
                         className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
                           allDone
                             ? 'bg-emerald-100 text-emerald-800'
+                            : matched > 0
+                            ? 'bg-indigo-100 text-indigo-800'
                             : 'bg-amber-100 text-amber-800'
                         }`}
                       >
-                        {allDone ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : <AlertCircle className="w-3 h-3 text-amber-600" />}
-                        {matched} of {total} Campaigns Matched
+                        {allDone ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : <Layers className="w-3 h-3 text-indigo-600" />}
+                        {matched} of {total} Line Items Assigned to Campaigns
                       </span>
                     );
                   })()}
@@ -862,6 +1151,16 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
 
               {/* Quick Matching Action Buttons */}
               <div className="flex flex-wrap items-center gap-2">
+                {selectedCampaignId && selectedCampaignId !== 'auto_create' && (
+                  <button
+                    type="button"
+                    onClick={() => handleAutoCreateAllAsLineItems(selectedCampaignId)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-300 bg-indigo-50 hover:bg-indigo-100 text-xs font-bold text-indigo-800 shadow-2xs transition-colors"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Auto-Create Line Items in Target Campaign</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleAutoMatchByName}
@@ -875,7 +1174,7 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                   onClick={handleSetAllUnmatchedToUnmapped}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-200 bg-amber-50/70 hover:bg-amber-100/70 text-xs font-semibold text-amber-800 shadow-2xs transition-colors"
                 >
-                  <span>Route All Unmatched to Unallocated</span>
+                  <span>Route All to Unallocated</span>
                 </button>
                 <button
                   type="button"
@@ -888,11 +1187,56 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
               </div>
             </div>
 
+            {/* Ingestion Rule & Target Campaign Bar */}
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <Layers className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <div>
+                    <span className="text-xs font-bold text-slate-900">Campaign Assignment for CSV Line Items:</span>
+                    <span className="text-xs text-slate-500 ml-1.5">
+                      Select an overarching campaign for these lines, or configure individually below.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <select
+                    value={selectedCampaignId}
+                    onChange={e => {
+                      const newId = e.target.value;
+                      setSelectedCampaignId(newId);
+                      if (newId && newId !== 'auto_create') {
+                        handleAutoCreateAllAsLineItems(newId);
+                      }
+                    }}
+                    className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-medium text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                  >
+                    <option value="">— Assign per line item below —</option>
+                    <option value="auto_create">+ Create New Campaign for this CSV</option>
+                    {campaigns.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.currency})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Explicit Rule Banner */}
+              <div className="p-3 rounded-lg bg-indigo-50/70 border border-indigo-100 flex items-start gap-2.5 text-xs text-indigo-950">
+                <Sparkles className="w-4 h-4 text-indigo-600 mt-0.5 shrink-0" />
+                <div className="leading-relaxed">
+                  <strong>Granularity Note:</strong> Each line on the CSV is equal to a line item in a campaign. When imported, each distinct line will be created or updated as an individual media execution line item under the designated campaign, preserving all ad-set and creative metrics.
+                </div>
+              </div>
+            </div>
+
             {/* Campaign Ingestion Guardrail Notice */}
             <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 flex items-start gap-2.5">
               <ShieldCheck className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
               <div className="text-xs text-blue-900 leading-relaxed">
-                <span className="font-bold">Campaign Ingestion Guardrail:</span> Only identified campaigns will have their performance data ingested into campaign analytics. Any campaign not identified will automatically be kept in <strong>Unallocated (Unmapped Campaigns)</strong>.
+                <span className="font-bold">Campaign Ingestion Guardrail:</span> Only identified campaigns and line items will have their performance data ingested into campaign analytics. Any line item marked <strong>Unallocated</strong> will be routed to the <strong>Unmapped Campaigns</strong> section.
               </div>
             </div>
 
@@ -904,7 +1248,7 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                   <div>
                     <span className="text-xs font-bold text-amber-900">No Existing Campaigns for this Brand</span>
                     <p className="text-[11px] text-amber-700 mt-0.5">
-                      Unmatched campaigns will automatically route to Unallocated. You can also create a new campaign or link below.
+                      Unmatched line items will automatically route to Unallocated. You can also create a new campaign above or link below.
                     </p>
                   </div>
                 </div>
@@ -918,108 +1262,318 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
               </div>
             )}
 
-            {/* Campaign Mapping Rows */}
-            <div className="space-y-3">
-              {previewData.distinct_campaigns.map((dc: any) => {
-                const matchVal = campaignMatches[dc.platform_campaign_id] || '';
-                const isUnmapped = !matchVal || matchVal === 'unmapped';
-                const isLineLink = matchVal.startsWith('line:');
-                const isCampLink = matchVal.startsWith('camp:');
-                const isAutoCreate = matchVal.startsWith('create_new:');
-                const isIdentified = isLineLink || isCampLink;
-                const isMatched = isIdentified || isAutoCreate;
+            {/* Hierarchical Campaign Groups & Ad Sets Mapping */}
+            {previewData.distinct_campaign_groups && previewData.distinct_campaign_groups.length > 0 ? (
+              <div className="space-y-4">
+                {previewData.distinct_campaign_groups.map((group: any) => {
+                  const isCollapsed = !!collapsedCampaigns[group.csv_campaign_name];
+                  const campTargetVal = campaignMatches[group.csv_campaign_name] || '';
+                  const mappedCount = group.ad_sets.filter((as: any) => {
+                    const m = campaignMatches[as.item_key] || campaignMatches[as.csv_ad_set_name] || campTargetVal;
+                    return m && m !== '' && m !== 'unmapped';
+                  }).length;
 
-                return (
-                  <div
-                    key={dc.platform_campaign_id}
-                    className="p-4 rounded-xl border border-slate-200 bg-white hover:border-slate-300 transition-colors flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-2xs"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-bold text-slate-900 text-xs truncate max-w-sm">
-                          {dc.campaign_name}
-                        </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700">
-                          ID: {dc.platform_campaign_id}
-                        </span>
-                        <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
-                          {selectedPlatform}
-                        </span>
-                        {isIdentified ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                            <Check className="w-3 h-3 text-emerald-600" />
-                            Identified Campaign (Will Ingest Data)
+                  return (
+                    <div
+                      key={group.csv_campaign_name}
+                      className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs hover:border-slate-300 transition-colors"
+                    >
+                      {/* Campaign Group Header (Column A) */}
+                      <div className="p-4 bg-slate-50/90 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                        <div className="flex items-start gap-3 min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => toggleCollapseCampaign(group.csv_campaign_name)}
+                            className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-600 mt-0.5 cursor-pointer shrink-0 transition-colors"
+                            title={isCollapsed ? 'Expand Ad Sets' : 'Collapse Ad Sets'}
+                          >
+                            {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </button>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">
+                                Column A Campaign
+                              </span>
+                              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded border ${
+                                mappedCount === group.ad_sets.length 
+                                  ? 'text-emerald-700 bg-emerald-50 border-emerald-200' 
+                                  : 'text-indigo-700 bg-indigo-50 border-indigo-200'
+                              }`}>
+                                {mappedCount} of {group.ad_sets.length} Line Items Mapped
+                              </span>
+                            </div>
+                            <h4 
+                              className="text-sm font-bold text-slate-900 leading-snug break-words selection:bg-indigo-100" 
+                              title={group.csv_campaign_name}
+                            >
+                              {group.csv_campaign_name}
+                            </h4>
+                            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 mt-2">
+                              <span>{group.ad_sets.length} Ad Sets / Line Items</span>
+                              <span>•</span>
+                              <span>{group.rows_count} Total Rows</span>
+                              <span>•</span>
+                              <span className="font-semibold text-slate-700">
+                                Total Spend: {group.total_spend.toLocaleString()} {importCurrency}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Campaign-Level Target Action */}
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2 shrink-0 bg-white lg:bg-slate-100/70 p-2.5 lg:p-2 rounded-lg border border-slate-200">
+                          <span className="text-xs font-semibold text-slate-600 whitespace-nowrap">
+                            Map Campaign to:
                           </span>
-                        ) : isAutoCreate ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200">
-                            <Sparkles className="w-3 h-3 text-indigo-600" />
-                            Auto-Create Campaign
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
-                            Unallocated (Routes to Unmapped)
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-slate-500 mt-1">
-                        {dc.rows_count} reporting {dc.rows_count === 1 ? 'row' : 'rows'} detected in CSV
-                      </p>
-                    </div>
-
-                    <div className="w-full lg:w-96">
-                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                        Target Campaign / Line Item
-                      </label>
-                      <select
-                        value={matchVal}
-                        onChange={e =>
-                          setCampaignMatches({
-                            ...campaignMatches,
-                            [dc.platform_campaign_id]: e.target.value
-                          })
-                        }
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-medium text-slate-900 bg-white outline-none focus:ring-2 focus:ring-indigo-500"
-                      >
-                        <option value="unmapped">
-                          ⚠️ Unallocated (Send to Unmapped Campaigns)
-                        </option>
-
-                        {/* Direct Option to Auto-Create New Campaign with this name */}
-                        <option value={`create_new:${dc.campaign_name}`}>
-                          ✨ Auto-Create New Campaign "{dc.campaign_name}"
-                        </option>
-
-                        {/* Existing Campaigns */}
-                        {campaigns.map(c => {
-                          const linesForCamp = lineItems.filter(l => l.campaign_id === c.id);
-                          return (
-                            <optgroup key={c.id} label={`Campaign: ${c.name}`}>
-                              <option value={`camp:${c.id}`}>
-                                Link to "{c.name}" (Auto-link/create {selectedPlatform.toUpperCase()} line)
+                          <select
+                            value={campTargetVal}
+                            onChange={e => handleSetCampaignTarget(group.csv_campaign_name, e.target.value)}
+                            className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-medium text-slate-900 bg-white outline-none focus:ring-2 focus:ring-indigo-500 w-full sm:w-auto min-w-[240px] max-w-sm"
+                          >
+                            <option value="">— Select Target Campaign —</option>
+                            <option value={`create_new:${group.csv_campaign_name}`}>
+                              ✨ Auto-Create Campaign "{group.csv_campaign_name}"
+                            </option>
+                            <option value="unmapped">
+                              ⚠️ Route entire campaign to Unallocated
+                            </option>
+                            {campaigns.map(c => (
+                              <option key={c.id} value={`camp:${c.id}`}>
+                                Existing Campaign: {c.name}
                               </option>
-                              {linesForCamp.map(l => (
-                                <option key={l.id} value={`line:${l.id}`}>
-                                  ↳ Line Item: {l.name} ({l.platform.toUpperCase()} - {l.currency} {l.budget.toLocaleString()})
-                                </option>
-                              ))}
-                            </optgroup>
-                          );
-                        })}
-                      </select>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
 
-                      {/* Helper status text */}
-                      <p className="text-[10px] text-slate-500 mt-1">
-                        {matchVal === 'unmapped' && 'Will be saved in the Unmapped Campaigns section to review and attribute later.'}
-                        {isLineLink && 'Directly maps to selected line item metrics.'}
-                        {isCampLink && `Links to campaign and auto-creates ${selectedPlatform.toUpperCase()} line item if needed.`}
-                        {isAutoCreate && 'A new business campaign will be created automatically upon ingestion.'}
-                        {!isMatched && 'Select a target campaign, auto-create, or leave unmapped.'}
-                      </p>
+                      {/* Nested Ad Sets / Line Items (Column B) */}
+                      {!isCollapsed && (
+                        <div className="p-4 space-y-3 divide-y divide-slate-100">
+                          {group.ad_sets.map((as: any, idx: number) => {
+                            const matchVal = campaignMatches[as.item_key] || campaignMatches[as.csv_ad_set_name] || campTargetVal || '';
+                            const isLineLink = matchVal.startsWith('line:');
+                            const isCampLink = matchVal.startsWith('camp:');
+                            const isAutoCreate = matchVal.startsWith('create_new:');
+                            const isUnmapped = !matchVal || matchVal === 'unmapped';
+
+                            let targetCampName = '';
+                            if (isCampLink) {
+                              const cId = matchVal.replace('camp:', '');
+                              const c = campaigns.find(item => item.id === cId);
+                              if (c) targetCampName = c.name;
+                            }
+
+                            return (
+                              <div
+                                key={as.item_key || idx}
+                                className={`pt-3 first:pt-0 flex flex-col lg:flex-row lg:items-center justify-between gap-3.5 p-3 rounded-xl transition-colors ${
+                                  isUnmapped ? 'bg-amber-50/40 border border-amber-100' : 'hover:bg-slate-50 border border-transparent'
+                                }`}
+                              >
+                                <div className="flex-1 min-w-0 pr-0 lg:pr-4">
+                                  {/* Badges */}
+                                  <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded shrink-0">
+                                      Col B Line Item
+                                    </span>
+                                    {isLineLink ? (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                        <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                                        Direct Line Item Match
+                                      </span>
+                                    ) : isCampLink ? (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                                        <Sparkles className="w-3 h-3 text-indigo-600 shrink-0" />
+                                        Line Item in {targetCampName || 'Campaign'}
+                                      </span>
+                                    ) : isAutoCreate ? (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                                        <Sparkles className="w-3 h-3 text-indigo-600 shrink-0" />
+                                        Auto-Create Campaign
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                        Unallocated (Routes to Unmapped)
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Full Ad Set Name without truncating */}
+                                  <div
+                                    className="text-xs font-semibold text-slate-900 leading-relaxed break-words selection:bg-indigo-100"
+                                    title={as.csv_ad_set_name}
+                                  >
+                                    {as.csv_ad_set_name}
+                                  </div>
+
+                                  {/* Metrics */}
+                                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-1.5">
+                                    <span>{as.rows_count} {as.rows_count === 1 ? 'row' : 'rows'}</span>
+                                    <span>•</span>
+                                    <span className="font-medium text-slate-700">Spend: {as.total_spend.toLocaleString()} {importCurrency}</span>
+                                  </div>
+                                </div>
+
+                                <div className="w-full lg:w-80 xl:w-96 shrink-0">
+                                  <select
+                                    value={matchVal}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      setCampaignMatches(prev => ({
+                                        ...prev,
+                                        [as.item_key]: val,
+                                        [as.csv_ad_set_name]: val
+                                      }));
+                                    }}
+                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-medium text-slate-900 bg-white outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
+                                  >
+                                    <option value="unmapped">
+                                      ⚠️ Unallocated (Send to Unmapped)
+                                    </option>
+                                    <option value={`create_new:${group.csv_campaign_name}`}>
+                                      ✨ Auto-Create Line Item under "{group.csv_campaign_name}"
+                                    </option>
+                                    {campaigns.map(c => {
+                                      const linesForCamp = lineItems.filter(l => l.campaign_id === c.id);
+                                      return (
+                                        <optgroup key={c.id} label={`Campaign: ${c.name}`}>
+                                          <option value={`camp:${c.id}`}>
+                                            Ingest as Line Item in "{c.name}"
+                                          </option>
+                                          {linesForCamp.map(l => (
+                                            <option key={l.id} value={`line:${l.id}`}>
+                                              ↳ Match Line: {l.name}
+                                            </option>
+                                          ))}
+                                        </optgroup>
+                                      );
+                                    })}
+                                  </select>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            ) : (
+              /* Flat list fallback */
+              <div className="space-y-3">
+                {previewData.distinct_campaigns.map((dc: any) => {
+                  const matchVal = campaignMatches[dc.platform_campaign_id] || '';
+                  const isUnmapped = !matchVal || matchVal === 'unmapped';
+                  const isLineLink = matchVal.startsWith('line:');
+                  const isCampLink = matchVal.startsWith('camp:');
+                  const isAutoCreate = matchVal.startsWith('create_new:');
+                  const isIdentified = isLineLink || isCampLink;
+                  const isMatched = isIdentified || isAutoCreate;
+
+                  // Find campaign name if camp: link
+                  let targetCampName = '';
+                  if (isCampLink) {
+                    const campId = matchVal.replace('camp:', '');
+                    const c = campaigns.find(item => item.id === campId);
+                    if (c) targetCampName = c.name;
+                  }
+
+                  return (
+                    <div
+                      key={dc.platform_campaign_id}
+                      className="p-4 rounded-xl border border-slate-200 bg-white hover:border-slate-300 transition-colors flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-2xs"
+                    >
+                      <div className="flex-1 min-w-0 pr-0 lg:pr-4">
+                        <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                          <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
+                            {selectedPlatform}
+                          </span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700">
+                            Line ID: {dc.platform_campaign_id}
+                          </span>
+                          {isLineLink ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                              <Check className="w-3 h-3 text-emerald-600" />
+                              Direct Line Item Match
+                            </span>
+                          ) : isCampLink ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200">
+                              <Sparkles className="w-3 h-3 text-indigo-600" />
+                              Will Ingest as Line Item in {targetCampName || 'Campaign'}
+                            </span>
+                          ) : isAutoCreate ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200">
+                              <Sparkles className="w-3 h-3 text-indigo-600" />
+                              Auto-Create Campaign
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                              Unallocated (Routes to Unmapped)
+                            </span>
+                          )}
+                        </div>
+                        <h4
+                          className="font-bold text-slate-900 text-xs leading-snug break-words selection:bg-indigo-100"
+                          title={dc.campaign_name}
+                        >
+                          {dc.campaign_name}
+                        </h4>
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          {dc.rows_count} reporting {dc.rows_count === 1 ? 'row' : 'rows'} detected in CSV
+                          {dc.total_spend !== undefined && ` • Spend: ${dc.total_spend.toLocaleString()} ${importCurrency}`}
+                        </p>
+                      </div>
+
+                      <div className="w-full lg:w-80 xl:w-96 shrink-0">
+                        <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                          Target Campaign / Line Item
+                        </label>
+                        <select
+                          value={matchVal}
+                          onChange={e =>
+                            setCampaignMatches({
+                              ...campaignMatches,
+                              [dc.platform_campaign_id]: e.target.value
+                            })
+                          }
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-medium text-slate-900 bg-white outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
+                        >
+                          <option value="unmapped">
+                            ⚠️ Unallocated (Send to Unmapped Campaigns)
+                          </option>
+                          <option value={`create_new:${dc.campaign_name}`}>
+                            ✨ Auto-Create New Campaign "{dc.campaign_name}"
+                          </option>
+                          {campaigns.map(c => {
+                            const linesForCamp = lineItems.filter(l => l.campaign_id === c.id);
+                            return (
+                              <optgroup key={c.id} label={`Campaign: ${c.name}`}>
+                                <option value={`camp:${c.id}`}>
+                                  Ingest as Line Item in "{c.name}"
+                                </option>
+                                {linesForCamp.map(l => (
+                                  <option key={l.id} value={`line:${l.id}`}>
+                                    ↳ Existing Line: {l.name} ({l.platform.toUpperCase()} - {l.currency} {l.budget.toLocaleString()})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            );
+                          })}
+                        </select>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          {matchVal === 'unmapped' && 'Will be saved in Unmapped Campaigns to review and attribute later.'}
+                          {isLineLink && 'Directly maps performance metrics into the selected existing line item.'}
+                          {isCampLink && `Creates/updates line item under "${targetCampName || 'Campaign'}" with metrics from this CSV line.`}
+                          {isAutoCreate && 'A new campaign will be created with this line item upon ingestion.'}
+                          {!isMatched && 'Select a target campaign or leave unmapped.'}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="flex justify-between pt-4 border-t border-slate-100">
               <button
@@ -1049,8 +1603,8 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
           </div>
         )}
 
-        {/* STEP 5: Background Processing Status & Deduplication Summary */}
-        {step === 5 && importJob && (
+        {/* STEP 4: Background Ingestion Status & Deduplication Summary */}
+        {step === 4 && importJob && (
           <div className="mt-6 space-y-6">
             <div className="p-6 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
               <div className="flex items-center justify-between">
@@ -1072,9 +1626,9 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                   <div>
                     <h3 className="text-base font-bold text-slate-900">
                       {importJob.status === 'completed'
-                        ? 'Metrics Ingestion Completed Successfully'
+                        ? 'Ingestion Completed — Queued in Unmapped Campaigns'
                         : importJob.status === 'processing'
-                        ? 'Background Ingestion Job In Progress'
+                        ? 'Ingesting Rows to Unmapped Campaigns...'
                         : 'Ingestion Encountered Issues'}
                     </h3>
                     <p className="text-xs text-slate-500">File: {importJob.file_name}</p>
@@ -1094,15 +1648,15 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                 </span>
               </div>
 
-              {/* Deduplication & Count Summary Metrics (Section 15 & 21) */}
+              {/* Ingestion Metrics Summary */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
                 <div className="p-3 rounded-xl bg-white border border-slate-200">
-                  <span className="text-[10px] text-slate-400 uppercase font-medium block">Total Rows</span>
+                  <span className="text-[10px] text-slate-400 uppercase font-medium block">Total Rows Ingested</span>
                   <span className="text-lg font-bold text-slate-900">{importJob.total_rows}</span>
                 </div>
                 <div className="p-3 rounded-xl bg-white border border-slate-200">
-                  <span className="text-[10px] text-slate-400 uppercase font-medium block">New Rows Inserted</span>
-                  <span className="text-lg font-bold text-emerald-700">+{importJob.inserted_count}</span>
+                  <span className="text-[10px] text-slate-400 uppercase font-medium block">Sent to Unmapped</span>
+                  <span className="text-lg font-bold text-emerald-700">+{importJob.skipped_count || importJob.total_rows}</span>
                 </div>
                 <div className="p-3 rounded-xl bg-white border border-slate-200">
                   <span className="text-[10px] text-slate-400 uppercase font-medium block" title="Prevented double-counting">
@@ -1111,9 +1665,28 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                   <span className="text-lg font-bold text-indigo-700">{importJob.updated_count}</span>
                 </div>
                 <div className="p-3 rounded-xl bg-white border border-slate-200">
-                  <span className="text-[10px] text-slate-400 uppercase font-medium block">Skipped / Unmatched</span>
-                  <span className="text-lg font-bold text-slate-600">{importJob.skipped_count}</span>
+                  <span className="text-[10px] text-slate-400 uppercase font-medium block">Status</span>
+                  <span className="text-lg font-bold text-emerald-600 capitalize">{importJob.status}</span>
                 </div>
+              </div>
+
+              {/* Direct to Unmapped Navigation Callout */}
+              <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <span className="font-bold block text-indigo-950">Queued in Unmapped Campaigns</span>
+                  <p className="text-[11px] text-indigo-800 mt-0.5">
+                    All line items from <strong>{importJob.file_name}</strong> have been ingested directly into the Unmapped Campaigns queue with metrics deduplicated.
+                  </p>
+                </div>
+                {onNavigateToUnmapped && (
+                  <button
+                    onClick={onNavigateToUnmapped}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-xs transition-colors shrink-0 cursor-pointer"
+                  >
+                    <span>View Unmapped Campaigns</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
 
               {/* Deduplication Guarantee Note */}

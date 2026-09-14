@@ -21,7 +21,9 @@ import {
   Plus,
   CheckCircle2,
   ShieldCheck,
-  RefreshCw
+  RefreshCw,
+  Pencil,
+  Trash2
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { formatMoney as formatCurrencyMoney, formatNumber, formatPercent } from '../../lib/formatters';
@@ -31,17 +33,22 @@ interface LineItemDetailsProps {
   onClose?: () => void;
   isExpandedView?: boolean;
   onConnectDataSource?: (lineItem: CampaignLineItem) => void;
+  onEditLineItem?: (lineItem: CampaignLineItem) => void;
+  onDeleteLineItem?: (lineItem: CampaignLineItem) => void;
 }
 
 export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
   metrics,
   onClose,
   isExpandedView = true,
-  onConnectDataSource
+  onConnectDataSource,
+  onEditLineItem,
+  onDeleteLineItem
 }) => {
   const [activeMetricTab, setActiveMetricTab] = useState<'spend' | 'impressions' | 'kpi'>('spend');
   const [showDailyTable, setShowDailyTable] = useState(false);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+  const [rollbackFeedback, setRollbackFeedback] = useState<string | null>(null);
 
   const { line_item } = metrics;
   const currency = line_item.currency || 'LKR';
@@ -51,13 +58,44 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
     return formatCurrencyMoney(val, currency, currency === 'USD' ? 2 : 0);
   };
 
-  const handleDisconnect = async (sourceId: string) => {
-    if (!confirm('Are you sure you want to disconnect this platform campaign? Live metric synchronization will stop.')) {
-      return;
-    }
+  const handleUnlink = async (sourceId: string, campaignName: string) => {
+    const confirmed = window.confirm(
+      `Unlink Campaign & Roll Back Totals?\n\nAre you sure you want to unlink "${campaignName}" from this line item?\n\nAll ad spend, impressions, clicks, and conversion metrics from this platform campaign will be rolled back from the line item and parent campaign totals. The ad campaign will be restored to Unmapped Campaigns.`
+    );
+    if (!confirmed) return;
+
     setDisconnectingId(sourceId);
+    setRollbackFeedback(null);
     try {
-      await ApiService.disconnectLineItemDataSource(line_item.agency_id, line_item.id, sourceId);
+      const res = await ApiService.unlinkLineItemDataSource(line_item.agency_id, line_item.id, sourceId);
+      const spendFormatted = formatMoney(res.rolledBack?.spend || 0);
+      const impsFormatted = (res.rolledBack?.impressions || 0).toLocaleString();
+      setRollbackFeedback(
+        `Successfully unlinked "${campaignName}". Rolled back ${spendFormatted} spend and ${impsFormatted} impressions from campaign totals.`
+      );
+      window.dispatchEvent(new CustomEvent('refresh-omnitrack'));
+      window.dispatchEvent(new CustomEvent('campaigns-updated'));
+    } catch (err: any) {
+      alert(err.message || 'Failed to unlink data source');
+    } finally {
+      setDisconnectingId(null);
+    }
+  };
+
+  const handleDisconnect = async (sourceId: string, campaignName: string) => {
+    const confirmed = window.confirm(
+      `Disconnect & Roll Back Totals?\n\nDisconnecting "${campaignName}" will stop live metric synchronization and roll back associated ad spend and metrics from campaign totals.`
+    );
+    if (!confirmed) return;
+
+    setDisconnectingId(sourceId);
+    setRollbackFeedback(null);
+    try {
+      const res = await ApiService.disconnectLineItemDataSource(line_item.agency_id, line_item.id, sourceId, true);
+      const spendFormatted = formatMoney(res.rolledBack?.spend || 0);
+      setRollbackFeedback(
+        `Data source disconnected. Rolled back ${spendFormatted} spend from campaign totals.`
+      );
       window.dispatchEvent(new CustomEvent('refresh-omnitrack'));
       window.dispatchEvent(new CustomEvent('campaigns-updated'));
     } catch (err: any) {
@@ -87,12 +125,15 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
       {/* Header Info & Health */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
         <div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 flex-wrap">
             <span className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-100 text-slate-700">
               {line_item.platform}
             </span>
             <h3 className="text-lg font-bold text-slate-900">{line_item.name}</h3>
             <HealthBadge status={metrics.health} />
+            <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+              Health Rating: {metrics.health_score ?? 85}/100
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-slate-500">
             <span>Objective: <strong className="text-slate-700">{line_item.objective}</strong></span>
@@ -121,15 +162,44 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
           </div>
         </div>
 
-        {onClose && (
-          <button
-            onClick={onClose}
-            className="self-start sm:self-center px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-1.5"
-          >
-            <ChevronUp className="w-3.5 h-3.5" />
-            <span>Hide Drill-Down</span>
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+          {onEditLineItem && (
+            <button
+              type="button"
+              id={`edit-line-item-header-${line_item.id}`}
+              onClick={() => onEditLineItem(line_item)}
+              className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:text-indigo-600 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-lg transition-all flex items-center gap-1.5 shadow-2xs"
+              title="Edit Line Item"
+            >
+              <Pencil className="w-3.5 h-3.5 text-slate-500" />
+              <span>Edit</span>
+            </button>
+          )}
+
+          {onDeleteLineItem && (
+            <button
+              type="button"
+              id={`delete-line-item-header-${line_item.id}`}
+              onClick={() => onDeleteLineItem(line_item)}
+              className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:text-rose-600 bg-white hover:bg-rose-50 border border-slate-200 hover:border-rose-300 rounded-lg transition-all flex items-center gap-1.5 shadow-2xs"
+              title="Delete Line Item"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-slate-500" />
+              <span>Delete</span>
+            </button>
+          )}
+
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-1.5"
+            >
+              <ChevronUp className="w-3.5 h-3.5" />
+              <span>Hide Drill-Down</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Health Reasons / Alert Explanations */}
@@ -153,6 +223,25 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
 
       {/* Live Data Sources Mapping Section (Level 3 -> Level 4) */}
       <div className="bg-slate-50/70 border border-slate-200/90 rounded-xl p-4 space-y-3">
+        {/* Rollback Notification Banner */}
+        {rollbackFeedback && (
+          <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start justify-between gap-3 text-xs text-emerald-900">
+            <div className="flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+              <div>
+                <p className="font-semibold">{rollbackFeedback}</p>
+                <p className="text-[11px] text-emerald-700 mt-0.5">Campaign budget pacing, spend, and KPI totals have been recalculated.</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setRollbackFeedback(null)}
+              className="text-emerald-700 hover:text-emerald-900 font-bold px-1.5 py-0.5 rounded"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <div className="flex items-center gap-2">
@@ -239,16 +328,17 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
 
                 <div className="flex items-center gap-2 shrink-0">
                   <button
-                    onClick={() => handleDisconnect(ds.id)}
+                    onClick={() => handleUnlink(ds.id, ds.platform_campaign_name || ds.platform_campaign_id)}
                     disabled={disconnectingId === ds.id}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-md border border-rose-200/80 transition-colors disabled:opacity-50"
+                    title="Unlink this ad campaign and roll back all associated spend and metrics from totals"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50/80 hover:bg-rose-100/90 rounded-lg border border-rose-200 transition-colors disabled:opacity-50 shadow-2xs cursor-pointer"
                   >
                     {disconnectingId === ds.id ? (
-                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      <Unlink className="w-3 h-3" />
+                      <Unlink className="w-3.5 h-3.5 text-rose-600" />
                     )}
-                    <span>Disconnect</span>
+                    <span>Unlink &amp; Roll Back Totals</span>
                   </button>
                 </div>
               </div>
@@ -258,7 +348,7 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
       </div>
 
       {/* Key Metric Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <MetricCard
           label="Budget Allocated"
           value={formatMoney(line_item.budget)}
@@ -266,36 +356,111 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
           statusColor="slate"
         />
         <MetricCard
-          label="Pacing %"
-          value={`${metrics.pacing_percentage.toFixed(0)}%`}
+          label="Spend Pacing %"
+          value={`${(metrics.pacing_percentage ?? 0).toFixed(0)}%`}
           subValue={`Expected: ${formatMoney(metrics.expected_spend)}`}
-          variance={metrics.pacing_percentage - 100}
-          varianceLabel="vs expected pace"
+          variance={metrics.total_spend > 0 ? (metrics.pacing_percentage ?? 0) - 100 : 0}
+          varianceLabel={metrics.total_spend > 0 ? "vs expected pace" : "awaiting delivery"}
           isPositiveGood={false} // near 0 variance is best
-          statusColor={metrics.pacing_percentage < 70 || metrics.pacing_percentage > 130 ? 'rose' : 'emerald'}
+          statusColor={metrics.total_spend === 0 ? 'slate' : (metrics.pacing_percentage ?? 0) < 70 || (metrics.pacing_percentage ?? 0) > 130 ? 'rose' : 'emerald'}
         />
         <MetricCard
-          label={`Target ${line_item.primary_kpi.toUpperCase()}`}
-          value={`${currency === 'USD' ? '$' : 'Rs.'} ${formatNumber(line_item.primary_kpi_target, 2)}`}
-          subValue={`Actual: ${currency === 'USD' ? '$' : 'Rs.'} ${formatNumber(metrics.primary_kpi_actual, 2)}`}
-          variance={metrics.primary_kpi_variance}
-          varianceLabel="variance"
-          isPositiveGood={!['cpm', 'cpc', 'cpa', 'cpe'].includes(line_item.primary_kpi)}
+          label={`Primary: ${line_item.primary_kpi.replace('_', ' ').toUpperCase()}`}
+          value={
+            ['reach', 'impressions', 'video_views', 'clicks', 'conversions', 'engagements'].includes(line_item.primary_kpi)
+              ? formatNumber(line_item.primary_kpi_target, 0)
+              : `${currency === 'USD' ? '$' : 'Rs.'} ${formatNumber(line_item.primary_kpi_target, 2)}`
+          }
+          subValue={
+            ['reach', 'impressions', 'video_views', 'clicks', 'conversions', 'engagements'].includes(line_item.primary_kpi)
+              ? `Delivered: ${formatNumber(metrics.primary_kpi_actual, 0)}`
+              : `Actual: ${currency === 'USD' ? '$' : 'Rs.'} ${formatNumber(metrics.primary_kpi_actual, 2)}`
+          }
+          variance={metrics.total_spend > 0 ? metrics.primary_kpi_variance : 0}
+          varianceLabel={metrics.total_spend > 0 ? "flight pace variance" : "0.0% variance"}
+          isPositiveGood={['reach', 'impressions', 'video_views', 'clicks', 'conversions', 'engagements', 'ctr', 'roas'].includes(line_item.primary_kpi)}
+        />
+        <MetricCard
+          label={`Buying KPI: ${line_item.buying_kpi ? line_item.buying_kpi.toUpperCase() : 'None'}`}
+          value={
+            line_item.buying_kpi && line_item.buying_kpi_target
+              ? `${currency === 'USD' ? '$' : 'Rs.'} ${formatNumber(line_item.buying_kpi_target, 2)}`
+              : '—'
+          }
+          subValue={
+            line_item.buying_kpi && metrics.buying_kpi_actual !== undefined
+              ? `Actual: ${currency === 'USD' ? '$' : 'Rs.'} ${formatNumber(metrics.buying_kpi_actual, 2)}`
+              : 'No cap set'
+          }
+          variance={metrics.total_spend > 0 && metrics.buying_kpi_variance !== undefined ? metrics.buying_kpi_variance : 0}
+          varianceLabel="cost efficiency"
+          isPositiveGood={false} // lower unit cost is favorable
+          statusColor={!line_item.buying_kpi ? 'slate' : metrics.buying_kpi_variance && metrics.buying_kpi_variance > 15 ? 'rose' : 'emerald'}
+        />
+        <MetricCard
+          label="Health Rating Score"
+          value={`${metrics.health_score ?? 85}/100`}
+          subValue={`Status: ${metrics.health.toUpperCase()}`}
+          statusColor={metrics.health === 'red' ? 'rose' : metrics.health === 'amber' ? 'amber' : 'emerald'}
         />
         <MetricCard
           label="Projected Final Spend"
           value={formatMoney(metrics.projected_final_spend)}
-          subValue={`Schedule: Day ${metrics.days_elapsed} of ${metrics.days_total}`}
+          subValue={`Day ${metrics.days_elapsed} of ${metrics.days_total}`}
           statusColor="slate"
         />
       </div>
+
+      {/* Primary Deliverable Volume Progress Bar (if volume KPI) */}
+      {['reach', 'impressions', 'video_views', 'clicks', 'conversions', 'engagements'].includes(line_item.primary_kpi) && (
+        <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-4 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+              <Target className="w-3.5 h-3.5 text-indigo-600" />
+              Primary Deliverable Pacing ({line_item.primary_kpi.replace('_', ' ').toUpperCase()})
+            </span>
+            <span className="text-indigo-700 font-bold font-mono">
+              {formatNumber(metrics.primary_kpi_actual ?? 0, 0)} of {formatNumber(line_item.primary_kpi_target ?? 0, 0)} ({((((metrics.primary_kpi_actual ?? 0) / (line_item.primary_kpi_target || 1))) * 100).toFixed(1)}% achieved)
+            </span>
+          </div>
+          <div className="w-full h-3.5 bg-slate-200 rounded-full overflow-hidden relative shadow-inner">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${
+                metrics.health === 'red'
+                  ? 'bg-rose-500'
+                  : metrics.health === 'amber'
+                  ? 'bg-amber-500'
+                  : 'bg-indigo-600'
+              }`}
+              style={{ width: `${Math.min(100, (((metrics.primary_kpi_actual ?? 0) / (line_item.primary_kpi_target || 1))) * 100)}%` }}
+            />
+            {/* Expected deliverable marker */}
+            <div
+              className="absolute top-0 bottom-0 w-1 bg-slate-900 shadow-xs ring-1 ring-white/90 z-20 transition-all duration-300 -ml-0.5"
+              style={{
+                left: `${Math.min(100, (((metrics.primary_kpi_expected ?? (line_item.primary_kpi_target * (metrics.days_elapsed / (metrics.days_total || 1)))) / (line_item.primary_kpi_target || 1))) * 100)}%`
+              }}
+              title={`Expected Deliverable Target on Day ${metrics.days_elapsed}: ${formatNumber(metrics.primary_kpi_expected ?? 0, 0)}`}
+            />
+          </div>
+          <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
+            <span>Target: {formatNumber(line_item.primary_kpi_target ?? 0, 0)} {line_item.primary_kpi.replace('_', ' ')}</span>
+            <span className="flex items-center gap-1.5 font-medium text-slate-700 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+              <span className="inline-block w-2 h-2 bg-slate-800 rounded-full" /> Expected on Day {metrics.days_elapsed}: {formatNumber(metrics.primary_kpi_expected ?? 0, 0)}
+            </span>
+            <span className={(metrics.primary_kpi_variance ?? 0) >= 0 ? 'text-emerald-700 font-bold' : 'text-rose-700 font-bold'}>
+              Pacing: {(metrics.primary_kpi_variance ?? 0) >= 0 ? '+' : ''}{(metrics.primary_kpi_variance ?? 0).toFixed(1)}% vs schedule
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Spend vs Expected Spend Progress Bar */}
       <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2">
         <div className="flex items-center justify-between text-xs">
           <span className="font-semibold text-slate-700">Budget Consumption & Delivery Progress</span>
           <span className="text-slate-500 font-mono">
-            {((metrics.total_spend / (line_item.budget || 1)) * 100).toFixed(1)}% utilized
+            {((((metrics.total_spend ?? 0) / (line_item.budget || 1))) * 100).toFixed(1)}% utilized
           </span>
         </div>
         <div className="w-full h-3.5 bg-slate-200 rounded-full overflow-hidden relative shadow-inner">
@@ -328,7 +493,7 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
       </div>
 
       {/* Interactive Trend Chart */}
-      {dailyData.length > 0 && (
+      {dailyData.length > 0 ? (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
@@ -370,7 +535,7 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
                   tick={{ fontSize: 10, fill: '#64748b' }}
                   axisLine={false}
                   tickLine={false}
-                  tickFormatter={val => (val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val)}
+                  tickFormatter={val => (val != null && !isNaN(Number(val)) && Number(val) >= 1000 ? `${(Number(val) / 1000).toFixed(0)}k` : String(val ?? 0))}
                 />
                 <Tooltip
                   contentStyle={{ backgroundColor: '#0f172a', borderRadius: '8px', border: 'none', color: '#fff', fontSize: '11px' }}
@@ -390,6 +555,16 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
               </AreaChart>
             </ResponsiveContainer>
           </div>
+        </div>
+      ) : (
+        <div className="p-4 bg-slate-50 border border-slate-200/70 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-500">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-slate-400 shrink-0" />
+            <span>Daily Reporting Metrics: Initialized at zero. Reporting graph will populate upon platform sync or CSV import.</span>
+          </div>
+          <span className="font-mono text-[11px] font-semibold text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200 shrink-0">
+            0 reporting days
+          </span>
         </div>
       )}
 

@@ -35,12 +35,25 @@ export const CreateLineItemModal: React.FC<CreateLineItemModalProps> = ({
   const [startDate, setStartDate] = useState('2026-09-01');
   const [endDate, setEndDate] = useState('2026-09-30');
   const [budget, setBudget] = useState<number>(lineItemCurrency === 'USD' ? 1200 : 350000);
-  const [primaryKpi, setPrimaryKpi] = useState<KpiMetricType>('cpm');
-  const [primaryKpiTarget, setPrimaryKpiTarget] = useState<number>(lineItemCurrency === 'USD' ? 1.5 : 250);
+  const [primaryKpi, setPrimaryKpi] = useState<KpiMetricType>('impressions');
+  const [primaryKpiTarget, setPrimaryKpiTarget] = useState<number>(500000);
+  const [buyingKpi, setBuyingKpi] = useState<KpiMetricType | 'none'>('cpm');
+  const [buyingKpiTarget, setBuyingKpiTarget] = useState<number>(lineItemCurrency === 'USD' ? 2.5 : 250);
   const [tolerance, setTolerance] = useState<number>(10);
   const [status, setStatus] = useState<'draft' | 'active' | 'paused' | 'completed'>('active');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!currentAgency || !campaignId) return;
+    ApiService.getCampaignDetails(currentAgency.id, campaignId).then(data => {
+      if (data?.campaign) {
+        if (data.campaign.start_date) setStartDate(data.campaign.start_date);
+        if (data.campaign.end_date) setEndDate(data.campaign.end_date);
+        if (data.campaign.currency && !currency) setLineItemCurrency(data.campaign.currency);
+      }
+    }).catch(() => {});
+  }, [currentAgency, campaignId, currency]);
 
   const handlePlatformChange = (newPlatform: PlatformType) => {
     setPlatform(newPlatform);
@@ -48,6 +61,35 @@ export const CreateLineItemModal: React.FC<CreateLineItemModalProps> = ({
       // Promptly recommend USD for Meta
       setLineItemCurrency('USD');
       if (budget === 350000) setBudget(1200);
+      if (buyingKpiTarget === 250) setBuyingKpiTarget(2.5);
+    }
+  };
+
+  const handlePrimaryKpiChange = (newKpi: KpiMetricType) => {
+    setPrimaryKpi(newKpi);
+    // Provide sensible default targets based on metric category
+    if (newKpi === 'reach') {
+      setPrimaryKpiTarget(350000);
+      setBuyingKpi('cpm');
+    } else if (newKpi === 'impressions') {
+      setPrimaryKpiTarget(500000);
+      setBuyingKpi('cpm');
+    } else if (newKpi === 'video_views') {
+      setPrimaryKpiTarget(200000);
+      setBuyingKpi('cpv');
+      setBuyingKpiTarget(lineItemCurrency === 'USD' ? 0.02 : 3.5);
+    } else if (newKpi === 'clicks') {
+      setPrimaryKpiTarget(15000);
+      setBuyingKpi('cpc');
+      setBuyingKpiTarget(lineItemCurrency === 'USD' ? 0.25 : 45);
+    } else if (newKpi === 'conversions') {
+      setPrimaryKpiTarget(500);
+      setBuyingKpi('cpa');
+      setBuyingKpiTarget(lineItemCurrency === 'USD' ? 15 : 650);
+    } else if (newKpi === 'engagements') {
+      setPrimaryKpiTarget(25000);
+      setBuyingKpi('cpe');
+      setBuyingKpiTarget(lineItemCurrency === 'USD' ? 0.05 : 12);
     }
   };
 
@@ -73,9 +115,13 @@ export const CreateLineItemModal: React.FC<CreateLineItemModalProps> = ({
         currency: lineItemCurrency,
         primary_kpi: primaryKpi,
         primary_kpi_target: primaryKpiTarget,
+        buying_kpi: buyingKpi !== 'none' ? buyingKpi : undefined,
+        buying_kpi_target: buyingKpi !== 'none' && buyingKpiTarget > 0 ? buyingKpiTarget : undefined,
         status,
         pacing_tolerance: tolerance
       });
+      window.dispatchEvent(new CustomEvent('refresh-omnitrack'));
+      window.dispatchEvent(new CustomEvent('campaigns-updated'));
       onCreated();
       onClose();
     } catch (err: any) {
@@ -260,48 +306,114 @@ export const CreateLineItemModal: React.FC<CreateLineItemModalProps> = ({
             </div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-3">
-            <span className="font-bold text-slate-900 uppercase block tracking-wider text-[11px]">
-              Primary KPI & Tolerances
-            </span>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block font-medium text-slate-600 mb-1">Primary KPI Metric</label>
-                <select
-                  value={primaryKpi}
-                  onChange={e => setPrimaryKpi(e.target.value as any)}
-                  className="w-full px-2.5 py-1.5 border border-slate-200 rounded text-xs outline-none bg-white font-semibold uppercase"
-                >
-                  <option value="cpm">CPM (Cost per 1,000 Impressions)</option>
-                  <option value="cpc">CPC (Cost per Click)</option>
-                  <option value="cpa">CPA (Cost per Acquisition)</option>
-                  <option value="ctr">CTR (%)</option>
-                  <option value="cpe">CPE (Cost per Engagement)</option>
-                  <option value="roas">ROAS (Return on Ad Spend)</option>
-                  <option value="impressions">Total Impressions</option>
-                  <option value="conversions">Total Conversions</option>
-                </select>
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-4">
+            {/* Primary Deliverable KPI */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-bold text-slate-900 uppercase block tracking-wider text-[11px] flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
+                  Primary Deliverable KPI *
+                </span>
+                <span className="text-[10px] text-indigo-700 bg-indigo-50 font-semibold px-2 py-0.5 rounded-full border border-indigo-200/60">
+                  Affects Campaign Health Rating
+                </span>
               </div>
 
-              <div>
-                <label className="block font-medium text-slate-600 mb-1">
-                  KPI Target Value ({lineItemCurrency})
-                </label>
-                <FormattedNumberInput
-                  value={primaryKpiTarget}
-                  onChange={val => setPrimaryKpiTarget(val)}
-                  prefix={lineItemCurrency === 'USD' ? '$' : undefined}
-                  placeholder="250"
-                  allowDecimals={true}
-                  required
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">Primary KPI Type</label>
+                  <select
+                    value={primaryKpi}
+                    onChange={e => handlePrimaryKpiChange(e.target.value as any)}
+                    className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs outline-none bg-white font-semibold text-slate-800 focus:border-indigo-500"
+                  >
+                    <optgroup label="Volume & Deliverable KPIs (Recommended)">
+                      <option value="reach">Unique Reach (Users)</option>
+                      <option value="impressions">Total Impressions</option>
+                      <option value="video_views">Video Views</option>
+                      <option value="clicks">Link Clicks</option>
+                      <option value="conversions">Total Conversions</option>
+                      <option value="engagements">Total Engagements</option>
+                    </optgroup>
+                    <optgroup label="Rate & Efficiency KPIs">
+                      <option value="cpm">CPM (Cost per 1,000)</option>
+                      <option value="cpc">CPC (Cost per Click)</option>
+                      <option value="cpa">CPA (Cost per Acquisition)</option>
+                      <option value="ctr">CTR (%)</option>
+                      <option value="cpe">CPE (Cost per Engagement)</option>
+                      <option value="roas">ROAS (Return on Spend)</option>
+                    </optgroup>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">
+                    Primary Target Number *
+                  </label>
+                  <FormattedNumberInput
+                    value={primaryKpiTarget}
+                    onChange={val => setPrimaryKpiTarget(val)}
+                    placeholder="e.g. 500,000"
+                    allowDecimals={!['impressions', 'reach', 'video_views', 'clicks', 'conversions', 'engagements'].includes(primaryKpi)}
+                    required
+                  />
+                </div>
               </div>
             </div>
 
-            <div>
-              <label className="block font-medium text-slate-600 mb-1">Pacing Tolerance (±%)</label>
-              <div className="w-32">
+            {/* Buying KPI (Secondary KPI) */}
+            <div className="pt-3 border-t border-slate-200/70">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-bold text-slate-900 uppercase block tracking-wider text-[11px] flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  Secondary Buying KPI
+                </span>
+                <span className="text-[10px] text-slate-500 bg-slate-200/60 font-medium px-2 py-0.5 rounded-full">
+                  Cost Efficiency Target
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">Buying KPI Metric</label>
+                  <select
+                    value={buyingKpi}
+                    onChange={e => setBuyingKpi(e.target.value as any)}
+                    className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs outline-none bg-white font-semibold text-slate-800 focus:border-indigo-500"
+                  >
+                    <option value="none">-- None (No Buying Cap) --</option>
+                    <option value="cpm">CPM (Target Cost per 1,000)</option>
+                    <option value="cpc">CPC (Target Cost per Click)</option>
+                    <option value="cpv">CPV (Target Cost per Video View)</option>
+                    <option value="cpa">CPA (Target Cost per Acquisition)</option>
+                    <option value="cpe">CPE (Target Cost per Engagement)</option>
+                    <option value="roas">ROAS (Target Return on Ad Spend)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">
+                    Buying Target Value ({lineItemCurrency})
+                  </label>
+                  <FormattedNumberInput
+                    value={buyingKpiTarget}
+                    onChange={val => setBuyingKpiTarget(val)}
+                    prefix={lineItemCurrency === 'USD' ? '$' : undefined}
+                    placeholder="e.g. 250"
+                    allowDecimals={true}
+                    disabled={buyingKpi === 'none'}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Pacing Tolerance */}
+            <div className="pt-3 border-t border-slate-200/70 flex items-center justify-between">
+              <div>
+                <label className="block font-medium text-slate-700">Flight Pacing Tolerance (±%)</label>
+                <span className="text-[11px] text-slate-400">Acceptable drift before flagging health warning</span>
+              </div>
+              <div className="w-28">
                 <FormattedNumberInput
                   value={tolerance}
                   onChange={val => setTolerance(val)}
@@ -310,7 +422,6 @@ export const CreateLineItemModal: React.FC<CreateLineItemModalProps> = ({
                   allowDecimals={false}
                 />
               </div>
-              <span className="text-[10px] text-slate-400 mt-1 block">Default ±10% acceptable pacing drift</span>
             </div>
           </div>
 

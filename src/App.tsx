@@ -103,13 +103,14 @@ const AppContent: React.FC = () => {
       {createLineItemCampaignId && (
         <CreateLineItemModal
           campaignId={createLineItemCampaignId}
-          clientId={drillDown.clientId || 'client_abc'}
-          brandId={drillDown.brandId || 'brand_tea'}
+          clientId={drillDown.clientId || ''}
+          brandId={drillDown.brandId || ''}
           currency="LKR"
           onClose={() => setCreateLineItemCampaignId(null)}
           onCreated={() => {
             setCreateLineItemCampaignId(null);
-            // Refresh
+            window.dispatchEvent(new CustomEvent('refresh-omnitrack'));
+            window.dispatchEvent(new CustomEvent('campaigns-updated'));
             setActiveTab('dashboard');
           }}
         />
@@ -118,10 +119,16 @@ const AppContent: React.FC = () => {
       {/* Campaign Creation Modal */}
       {showCreateCampaignModal && (
         <CreateCampaignModal
+          initialClientId={drillDown.clientId}
+          initialBrandId={drillDown.brandId}
           onClose={() => setShowCreateCampaignModal(false)}
-          onCreated={() => {
+          onCreated={(newCampaignId, clientId, brandId) => {
             setShowCreateCampaignModal(false);
-            setActiveTab('campaigns');
+            if (newCampaignId) {
+              selectCampaign(newCampaignId, clientId, brandId);
+            }
+            setActiveTab('dashboard');
+            window.dispatchEvent(new CustomEvent('refresh-omnitrack'));
             window.dispatchEvent(new CustomEvent('campaigns-updated'));
           }}
         />

@@ -2,14 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Client, Brand } from '../../types';
 import { ApiService } from '../../lib/api';
-import { Target, X, Calendar, DollarSign, ArrowRightLeft } from 'lucide-react';
-import { FormattedNumberInput } from '../common/FormattedNumberInput';
+import { Target, X, Calendar, ArrowRightLeft } from 'lucide-react';
 
 interface CreateCampaignModalProps {
   initialClientId?: string;
   initialBrandId?: string;
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (campaignId?: string, clientId?: string, brandId?: string) => void;
 }
 
 export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
@@ -30,7 +29,7 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
   const [objective, setObjective] = useState('Brand Awareness & Consideration');
   const [startDate, setStartDate] = useState('2026-09-01');
   const [endDate, setEndDate] = useState('2026-09-30');
-  const [status, setStatus] = useState<'draft' | 'active' | 'paused' | 'completed'>('draft');
+  const [status, setStatus] = useState<'draft' | 'active' | 'paused' | 'completed'>('active');
   const [currency, setCurrency] = useState('LKR');
   const [usdToLkrRate, setUsdToLkrRate] = useState(305);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -80,7 +79,7 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
     setError(null);
 
     try {
-      await ApiService.createCampaign(currentAgency.id, {
+      const createdCampaign = await ApiService.createCampaign(currentAgency.id, {
         client_id: clientId,
         brand_id: brandId,
         name: name.trim(),
@@ -92,9 +91,10 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
         usd_to_lkr_rate: usdToLkrRate,
         status
       });
+
       window.dispatchEvent(new CustomEvent('refresh-omnitrack'));
       window.dispatchEvent(new CustomEvent('campaigns-updated'));
-      onCreated();
+      onCreated(createdCampaign.id, clientId, brandId);
       onClose();
     } catch (err: any) {
       setError(err.message || 'Failed to create campaign');
@@ -241,14 +241,14 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
             </div>
           </div>
 
-          {/* Dynamic Budget Rule Callout - No Manual Entry */}
+          {/* Dynamic Budget Rule Callout - Explaining Line Items added after creation */}
           <div className="bg-indigo-50/70 border border-indigo-200/80 rounded-xl p-3.5 space-y-1.5">
             <div className="flex items-center gap-1.5 text-indigo-950 font-bold text-xs">
               <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Automated Dynamic Budget Rollup</span>
+              <span>Automated Dynamic Budget & KPI Rollup</span>
             </div>
             <p className="text-[11px] text-slate-600 leading-relaxed">
-              In OmniTrack, <strong>there is no manually entered campaign-level budget</strong>. The Business Campaign budget is calculated dynamically from the sum of its Campaign Line Items once created.
+              In OmniTrack, <strong>there is no manually entered campaign-level budget</strong>. Once this campaign is created, you can add line items for Meta, TikTok, Google Ads, etc., with their individual budgets and Primary KPIs. The campaign metrics will rollup automatically.
             </p>
             <div className="pt-1 flex items-center justify-between text-[11px] text-slate-500">
               <span>Conversion Rate: <strong>1 USD = {usdToLkrRate} LKR</strong></span>

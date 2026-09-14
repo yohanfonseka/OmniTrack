@@ -3,6 +3,8 @@ import { useAuth } from '../../context/AuthContext';
 import { Client, Brand } from '../../types';
 import { ApiService } from '../../lib/api';
 import { CreateCampaignModal } from '../modals/CreateCampaignModal';
+import { EditCampaignModal } from '../modals/EditCampaignModal';
+import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
 import {
   Briefcase,
   Tag,
@@ -43,6 +45,8 @@ export const ClientsBrandsView: React.FC<ClientsBrandsViewProps> = ({ onSelectCa
   const [editingBrand, setEditingBrand] = useState<Brand | null>(null);
   const [brandToDelete, setBrandToDelete] = useState<Brand | null>(null);
   const [createCampaignTarget, setCreateCampaignTarget] = useState<{ clientId: string; brandId: string } | null>(null);
+  const [campaignToEdit, setCampaignToEdit] = useState<any | null>(null);
+  const [campaignToDelete, setCampaignToDelete] = useState<any | null>(null);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
@@ -657,10 +661,38 @@ export const ClientsBrandsView: React.FC<ClientsBrandsViewProps> = ({ onSelectCa
                                     </span>
                                   </div>
 
-                                  <div className="flex items-center gap-3">
+                                  <div className="flex items-center gap-2">
                                     <span className="text-xs font-bold text-slate-700">
-                                      {cm.budget_used_percentage.toFixed(0)}% spent
+                                      {(cm.budget_used_percentage ?? 0).toFixed(0)}% spent
                                     </span>
+                                    <button
+                                      type="button"
+                                      id={`edit-brand-campaign-${cm.campaign.id}`}
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        setCampaignToEdit({
+                                          ...cm,
+                                          client_name: activeClient.name,
+                                          brand_name: brand.name
+                                        });
+                                      }}
+                                      className="p-1 text-slate-400 hover:text-indigo-600 rounded hover:bg-slate-100 transition-colors"
+                                      title="Edit Campaign"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      id={`delete-brand-campaign-${cm.campaign.id}`}
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        setCampaignToDelete(cm);
+                                      }}
+                                      className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors"
+                                      title="Delete Campaign"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
                                     <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
                                   </div>
                                 </div>
@@ -1221,6 +1253,41 @@ export const ClientsBrandsView: React.FC<ClientsBrandsViewProps> = ({ onSelectCa
             loadAll();
             notifyChange();
             showToast('Business Campaign created successfully under brand.');
+          }}
+        />
+      )}
+
+      {/* Edit Campaign Modal */}
+      {campaignToEdit && (
+        <EditCampaignModal
+          campaign={campaignToEdit.campaign}
+          clientName={campaignToEdit.client_name}
+          brandName={campaignToEdit.brand_name}
+          onClose={() => setCampaignToEdit(null)}
+          onUpdated={() => {
+            setCampaignToEdit(null);
+            loadAll();
+            notifyChange();
+            showToast('Campaign settings updated successfully.');
+          }}
+        />
+      )}
+
+      {/* Confirm Delete Campaign Modal */}
+      {campaignToDelete && (
+        <ConfirmDeleteModal
+          title="Delete Campaign"
+          itemName={campaignToDelete.campaign.name}
+          itemType="Campaign"
+          warningDetails={`Deleting "${campaignToDelete.campaign.name}" will permanently delete this campaign, its line items, daily performance metrics, and all mapped connections.`}
+          onClose={() => setCampaignToDelete(null)}
+          onConfirm={async () => {
+            if (!currentAgency) return;
+            await ApiService.deleteCampaign(currentAgency.id, campaignToDelete.campaign.id);
+            setCampaignToDelete(null);
+            loadAll();
+            notifyChange();
+            showToast('Campaign deleted successfully.');
           }}
         />
       )}

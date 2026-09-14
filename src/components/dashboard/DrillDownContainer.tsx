@@ -383,8 +383,18 @@ export const DrillDownContainer: React.FC<DrillDownContainerProps> = ({
           <p className="text-sm font-medium">Calculating multi-platform drill-down metrics...</p>
         </div>
       ) : error ? (
-        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6 text-rose-800 text-xs">
-          <strong>Error loading metrics: </strong> {error}
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6 text-rose-800 text-xs flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div>
+            <strong className="block text-rose-900 text-sm mb-0.5">Failed to load campaign hierarchy</strong>
+            <span>{error}</span>
+          </div>
+          <button
+            onClick={() => loadData()}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-lg text-xs font-bold transition-colors shrink-0 shadow-xs cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry</span>
+          </button>
         </div>
       ) : !activeCampaignMetrics ? (
         <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center space-y-4">
@@ -428,6 +438,12 @@ export const DrillDownContainer: React.FC<DrillDownContainerProps> = ({
             <CampaignOverview
               campaignMetrics={activeCampaignMetrics}
               onDrillDownPlatform={plat => selectPlatform(plat)}
+              onCampaignUpdated={() => loadData()}
+              onCampaignDeleted={() => {
+                setSelectedCampaignId('');
+                selectCampaign('', '', '');
+                loadData();
+              }}
             />
           </section>
 
@@ -524,6 +540,11 @@ export const DrillDownContainer: React.FC<DrillDownContainerProps> = ({
               onSelectPlatform={selectPlatform}
               onSelectLineItem={selectLineItem}
               onConnectDataSource={lineItem => setConnectingLineItem(lineItem)}
+              onOpenCreateLineItem={
+                !isAllCampaignsView && onOpenCreateLineItem
+                  ? () => onOpenCreateLineItem(activeCampaignMetrics.campaign.id)
+                  : undefined
+              }
             />
           </section>
         </div>

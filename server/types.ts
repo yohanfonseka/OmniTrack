@@ -7,16 +7,19 @@ export type CampaignStatus = 'active' | 'paused' | 'completed' | 'draft';
 export type HealthStatus = 'green' | 'amber' | 'red';
 
 export type KpiMetricType = 
+  | 'reach'
+  | 'impressions'
+  | 'video_views'
+  | 'clicks' 
+  | 'conversions' 
+  | 'engagements'
   | 'cpm' 
   | 'cpc' 
+  | 'cpv'
   | 'cpa' 
   | 'ctr' 
   | 'cpe' 
   | 'roas' 
-  | 'impressions' 
-  | 'clicks' 
-  | 'conversions' 
-  | 'video_views'
   | 'spend';
 
 export interface Agency {
@@ -102,6 +105,8 @@ export interface CampaignLineItem {
   currency: string;
   primary_kpi: KpiMetricType;
   primary_kpi_target: number;
+  buying_kpi?: KpiMetricType;
+  buying_kpi_target?: number;
   secondary_kpi_targets?: Partial<Record<KpiMetricType, number>>;
   status: CampaignStatus;
   pacing_tolerance: number; // e.g. 15 for 15% tolerance
@@ -313,9 +318,20 @@ export interface LineItemCalculatedMetrics {
   actual_cpa: number;
   actual_cpe: number;
   actual_roas: number;
+  actual_cpv?: number;
+  primary_kpi: KpiMetricType;
+  primary_kpi_target: number;
   primary_kpi_actual: number;
-  primary_kpi_variance: number; // percentage variance from target (+/- %)
+  primary_kpi_expected: number;
+  primary_kpi_pacing: number;
+  primary_kpi_progress: number;
+  primary_kpi_variance: number; // percentage variance from target/pace (+/- %)
+  buying_kpi?: KpiMetricType;
+  buying_kpi_target?: number;
+  buying_kpi_actual?: number;
+  buying_kpi_variance?: number;
   health: HealthStatus;
+  health_score: number; // 0 to 100 rating
   health_reasons: string[];
   days_elapsed: number;
   days_total: number;
@@ -363,6 +379,28 @@ export interface CampaignCalculatedMetrics {
   overall_pacing: number;
   projected_final_spend: number;
   overall_health: HealthStatus;
+  campaign_rating_score: number; // 0 to 100
+  campaign_rating_label: string; // 'Optimal' | 'On Track' | 'Needs Attention' | 'Critical Risk'
+  primary_kpis_summary?: {
+    kpi: KpiMetricType;
+    label: string;
+    target: number;
+    actual: number;
+    expected: number;
+    pacing_percentage: number;
+    progress_percentage: number;
+    variance: number;
+    status: HealthStatus;
+  }[];
+  buying_kpis_summary?: {
+    kpi: KpiMetricType;
+    label: string;
+    target: number;
+    actual: number;
+    variance: number;
+    currency: string;
+    status: HealthStatus;
+  }[];
   days_elapsed?: number;
   days_total?: number;
   total_impressions: number;

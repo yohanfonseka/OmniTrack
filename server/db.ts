@@ -116,6 +116,7 @@ class RelationalDatabase {
         this.lineItems = [...fsLineItems];
         this.dailyMetrics = [...fsMetrics];
         this.alerts = [...fsAlerts];
+        // Retain all unmapped campaigns including mapped ones so they can be viewed and unlinked
         this.unmappedCampaigns = [...fsUnmapped];
         this.lineItemDataSources = [...fsDataSources];
 
@@ -185,64 +186,104 @@ class RelationalDatabase {
   }
 
   /**
-   * Push the current in-memory state back to Firestore in bulk. Used by the
-   * "Sync to Firestore" admin action to force a full re-write, e.g. after
-   * data was edited directly in memory or a prior write was missed.
+   * Clear all ingested platform data:
+   * - Unmapped campaigns
+   * - Daily metrics
+   * - Line item data sources (linked platform campaign mappings)
+   * - Reset platform link attributes on line items (platform_campaign_id, platform_account_id, current_spend)
+   * - Recalculate campaign budgets
    */
-  async resyncToFirestore(agencyId?: string): Promise<{
-    agencies: number;
-    clients: number;
-    brands: number;
-    campaigns: number;
-    lineItems: number;
-    alerts: number;
+  async clearPlatformData(agencyId?: string): Promise<{
+    success: boolean;
+    unmappedCleared: number;
+    metricsCleared: number;
+    dataSourcesCleared: number;
   }> {
-    const agencies = agencyId ? this.agencies.filter(a => a.id === agencyId) : this.agencies;
-    const clients = agencyId ? this.clients.filter(c => c.agency_id === agencyId) : this.clients;
-    const brands = agencyId ? this.brands.filter(b => b.agency_id === agencyId) : this.brands;
-    const campaigns = agencyId ? this.campaigns.filter(c => c.agency_id === agencyId) : this.campaigns;
-    const lineItems = agencyId ? this.lineItems.filter(l => l.agency_id === agencyId) : this.lineItems;
-    const alerts = agencyId ? this.alerts.filter(a => a.agency_id === agencyId) : this.alerts;
+    const agencyLineItemIds = agencyId 
+      ? new Set(this.lineItems.filter(l => l.agency_id === agencyId).map(l => l.id))
+      : null;
 
-    await Promise.all([
-      batchSaveDocs('agencies', agencies),
-      batchSaveDocs('clients', clients),
-      batchSaveDocs('brands', brands),
-      batchSaveDocs('campaigns', campaigns),
-      batchSaveDocs('line_items', lineItems),
-      batchSaveDocs('alerts', alerts)
-    ]);
+    const unmappedCount = agencyId 
+      ? this.unmappedCampaigns.filter(u => u.agency_id === agencyId).length 
+      : this.unmappedCampaigns.length;
+    const metricsCount = agencyId
+      ? this.dailyMetrics.filter(m => m.agency_id === agencyId).length
+      : this.dailyMetrics.length;
+    const dataSourcesCount = agencyLineItemIds
+      ? this.lineItemDataSources.filter(ds => agencyLineItemIds.has(ds.line_item_id)).length
+      : this.lineItemDataSources.length;
 
+    if (agencyId && agencyLineItemIds) {
+      this.unmappedCampaigns = this.unmappedCampaigns.filter(u => u.agency_id !== agencyId);
+      this.dailyMetrics = this.dailyMetrics.filter(m => m.agency_id !== agencyId);
+      this.lineItemDataSources = this.lineItemDataSources.filter(ds => !agencyLineItemIds.has(ds.line_item_id));
+
+      for (const li of this.lineItems) {
+        if (li.agency_id === agencyId) {
+          delete (li as any).platform_campaign_id;
+          delete (li as any).platform_account_id;
+          saveDoc('line_items', li.id, li).catch(() => {});
+        }
+      }
+      for (const c of this.campaigns) {
+        if (c.agency_id === agencyId) {
+          this.recalculateCampaignBudget(c.id);
+        }
+      }
+    } else {
+      this.unmappedCampaigns = [];
+      this.dailyMetrics = [];
+      this.lineItemDataSources = [];
+      for (const li of this.lineItems) {
+        delete (li as any).platform_campaign_id;
+        delete (li as any).platform_account_id;
+        saveDoc('line_items', li.id, li).catch(() => {});
+      }
+      for (const c of this.campaigns) {
+        this.recalculateCampaignBudget(c.id);
+      }
+    }
+
+    // Clear platform data collections in Firestore
+    try {
+      await Promise.all([
+        clearCollection('unmapped_campaigns'),
+        clearCollection('daily_metrics'),
+        clearCollection('line_item_data_sources')
+      ]);
+    } catch (err) {
+      console.error('[Clear Platform Data] Firestore clear error:', err);
+    }
+
+    console.log(`[Firestore Database] Platform data cleared successfully: ${unmappedCount} unmapped, ${metricsCount} metrics, ${dataSourcesCount} data sources.`);
     return {
-      agencies: agencies.length,
-      clients: clients.length,
-      brands: brands.length,
-      campaigns: campaigns.length,
-      lineItems: lineItems.length,
-      alerts: alerts.length
+      success: true,
+      unmappedCleared: unmappedCount,
+      metricsCleared: metricsCount,
+      dataSourcesCleared: dataSourcesCount
     };
   }
 
-  getFirestoreStatus(agencyId?: string): {
-    connected: boolean;
-    projectId: string;
-    databaseId: string;
-    syncedCounts: { agencies: number; clients: number; brands: number; campaigns: number; lineItems: number; alerts: number };
-  } {
-    const { projectId, databaseId } = getFirestoreConnectionInfo();
-    return {
-      connected: this.firestoreInitialized,
-      projectId,
-      databaseId,
-      syncedCounts: {
-        agencies: (agencyId ? this.agencies.filter(a => a.id === agencyId) : this.agencies).length,
-        clients: (agencyId ? this.clients.filter(c => c.agency_id === agencyId) : this.clients).length,
-        brands: (agencyId ? this.brands.filter(b => b.agency_id === agencyId) : this.brands).length,
-        campaigns: (agencyId ? this.campaigns.filter(c => c.agency_id === agencyId) : this.campaigns).length,
-        lineItems: (agencyId ? this.lineItems.filter(l => l.agency_id === agencyId) : this.lineItems).length,
-        alerts: (agencyId ? this.alerts.filter(a => a.agency_id === agencyId) : this.alerts).length
-      }
-    };
+  private ensureBaselineSyncedToFirestore(): void {
+    // Write in background so Firestore has complete dataset
+    for (const c of this.clients) {
+      saveDoc('clients', c.id, c).catch(() => {});
+    }
+    for (const b of this.brands) {
+      saveDoc('brands', b.id, b).catch(() => {});
+    }
+    for (const cmp of this.campaigns) {
+      saveDoc('campaigns', cmp.id, cmp).catch(() => {});
+    }
+    for (const l of this.lineItems) {
+      saveDoc('line_items', l.id, l).catch(() => {});
+    }
+    for (const ds of this.lineItemDataSources) {
+      saveDoc('line_item_data_sources', ds.id, ds).catch(() => {});
+    }
+    for (const a of this.agencies) {
+      saveDoc('agencies', a.id, a).catch(() => {});
+    }
   }
 
   // ==================== AGENCIES ====================
@@ -834,16 +875,14 @@ class RelationalDatabase {
     lineItem.updated_at = new Date().toISOString();
     saveDoc('line_items', lineItem.id, lineItem).catch(err => console.error('[Firestore] update LineItem error:', err));
 
-    // If this campaign exists in unmapped campaigns, mark it as mapped
+    // If this campaign exists in unmapped campaigns, mark it as mapped and save linkage
     const unmapped = this.unmappedCampaigns.find(u => u.platform_campaign_id === params.platform_campaign_id);
     if (unmapped) {
       unmapped.status = 'mapped';
       unmapped.mapped_campaign_id = campaign.id;
       unmapped.mapped_line_item_id = lineItem.id;
-      unmapped.client_id = campaign.client_id;
-      unmapped.brand_id = campaign.brand_id;
       unmapped.updated_at = new Date().toISOString();
-      saveDoc('unmapped_campaigns', unmapped.id, unmapped).catch(err => console.error('[Firestore] update unmapped error:', err));
+      saveDoc('unmapped_campaigns', unmapped.id, unmapped).catch(err => console.error('[Firestore] update unmapped status error:', err));
     }
 
     // Link any existing daily metrics matching this platform campaign to this line item
@@ -869,13 +908,217 @@ class RelationalDatabase {
     return newSource;
   }
 
-  disconnectLineItemDataSource(
+  /**
+   * Core Unlink & Rollback Logic:
+   * When a campaign/line item is unlinked from platform data, all associated daily metrics
+   * (spend, impressions, clicks, conversions, etc.) are rolled back from line item and campaign totals.
+   * The platform campaign is restored to the Unmapped Campaigns pool.
+   */
+  unlinkLineItemDataSource(
     agencyId: string,
     lineItemId: string,
     sourceId: string,
     userId?: string,
     userName?: string
-  ): LineItemDataSource {
+  ): {
+    success: boolean;
+    message: string;
+    rolledBack: {
+      spend: number;
+      impressions: number;
+      clicks: number;
+      conversions: number;
+      conversion_value: number;
+      reach: number;
+      video_views: number;
+      engagements: number;
+      metricRows: number;
+    };
+    lineItemId: string;
+    campaignId?: string;
+  } {
+    // 1. Locate the data source mapping
+    const sourceIdx = this.lineItemDataSources.findIndex(s => s.id === sourceId && s.line_item_id === lineItemId);
+    const source = sourceIdx !== -1 ? this.lineItemDataSources[sourceIdx] : this.lineItemDataSources.find(s => s.id === sourceId);
+    if (!source) throw new Error('Data source mapping not found');
+
+    const lineItem = this.getLineItemById(agencyId, lineItemId);
+    const campaignId = lineItem?.campaign_id;
+    const campaign = campaignId ? this.getCampaignById(agencyId, campaignId) : undefined;
+
+    // 2. Identify all daily metrics belonging to this platform campaign for this line item/campaign
+    const matchingMetrics = this.dailyMetrics.filter(m =>
+      m.agency_id === agencyId &&
+      (m.line_item_id === lineItemId || (campaignId && m.campaign_id === campaignId)) &&
+      (m.platform_campaign_id === source.platform_campaign_id ||
+       (source.platform_campaign_id && m.platform_campaign_id === source.platform_campaign_id))
+    );
+
+    // 3. Compute rolled-back totals
+    const rolledBackSpend = matchingMetrics.reduce((sum, m) => sum + (Number(m.spend) || 0), 0);
+    const rolledBackImpressions = matchingMetrics.reduce((sum, m) => sum + (Number(m.impressions) || 0), 0);
+    const rolledBackClicks = matchingMetrics.reduce((sum, m) => sum + (Number(m.clicks) || 0), 0);
+    const rolledBackConversions = matchingMetrics.reduce((sum, m) => sum + (Number(m.conversions) || 0), 0);
+    const rolledBackConversionValue = matchingMetrics.reduce((sum, m) => sum + (Number(m.conversion_value) || 0), 0);
+    const rolledBackReach = matchingMetrics.reduce((sum, m) => sum + (Number(m.reach) || 0), 0);
+    const rolledBackVideoViews = matchingMetrics.reduce((sum, m) => sum + (Number(m.video_views) || 0), 0);
+    const rolledBackEngagements = matchingMetrics.reduce((sum, m) => sum + (Number(m.engagements) || 0), 0);
+
+    // 4. Remove these daily metrics from database and Firestore (rolling back totals)
+    const metricIdsToRemove = new Set(matchingMetrics.map(m => m.id));
+    this.dailyMetrics = this.dailyMetrics.filter(m => !metricIdsToRemove.has(m.id));
+    matchingMetrics.forEach(m => {
+      deleteDocById('daily_metrics', m.id).catch(err => console.error('[Firestore] delete daily metric rollback error:', err));
+    });
+
+    // 5. Restore or create in unmapped campaigns
+    let unmapped = this.unmappedCampaigns.find(u => u.platform_campaign_id === source.platform_campaign_id);
+    if (unmapped) {
+      unmapped.status = 'unmapped';
+      unmapped.mapped_campaign_id = undefined;
+      unmapped.mapped_line_item_id = undefined;
+      unmapped.updated_at = new Date().toISOString();
+      if (!unmapped.metrics || unmapped.metrics.length === 0) {
+        unmapped.metrics = matchingMetrics.map(m => ({
+          report_date: m.report_date,
+          spend: m.spend,
+          impressions: m.impressions,
+          reach: m.reach,
+          clicks: m.clicks,
+          conversions: m.conversions,
+          conversion_value: m.conversion_value,
+          video_views: m.video_views,
+          engagements: m.engagements
+        }));
+        unmapped.total_spend = rolledBackSpend || unmapped.total_spend;
+        unmapped.total_impressions = rolledBackImpressions || unmapped.total_impressions;
+        unmapped.total_clicks = rolledBackClicks || unmapped.total_clicks;
+        unmapped.total_conversions = rolledBackConversions || unmapped.total_conversions;
+      }
+      saveDoc('unmapped_campaigns', unmapped.id, unmapped).catch(err => console.error('[Firestore] revert unmapped error:', err));
+    } else {
+      this.createUnmappedCampaign({
+        agency_id: agencyId,
+        client_id: campaign?.client_id,
+        brand_id: campaign?.brand_id,
+        client_name: campaign ? this.getClientById(agencyId, campaign.client_id)?.name : undefined,
+        brand_name: campaign ? this.getBrandById(agencyId, campaign.brand_id)?.name : undefined,
+        platform: source.platform,
+        platform_account_id: source.platform_account_id,
+        platform_account_name: source.platform_account_name,
+        platform_campaign_id: source.platform_campaign_id,
+        platform_campaign_name: source.platform_campaign_name,
+        objective: lineItem?.objective || campaign?.objective || 'Conversions',
+        currency: lineItem?.currency || campaign?.currency || 'LKR',
+        total_spend: rolledBackSpend,
+        total_impressions: rolledBackImpressions,
+        total_clicks: rolledBackClicks,
+        total_conversions: rolledBackConversions,
+        total_conversion_value: rolledBackConversionValue,
+        total_video_views: rolledBackVideoViews,
+        first_report_date: matchingMetrics[0]?.report_date,
+        last_report_date: matchingMetrics[matchingMetrics.length - 1]?.report_date,
+        row_count: matchingMetrics.length,
+        status: 'unmapped',
+        pulled_at: new Date().toISOString(),
+        metrics: matchingMetrics.map(m => ({
+          report_date: m.report_date,
+          spend: m.spend,
+          impressions: m.impressions,
+          reach: m.reach,
+          clicks: m.clicks,
+          conversions: m.conversions,
+          conversion_value: m.conversion_value,
+          video_views: m.video_views,
+          engagements: m.engagements
+        }))
+      });
+    }
+
+    // 6. Remove data source mapping from lineItemDataSources and Firestore
+    const currentDsIdx = this.lineItemDataSources.findIndex(s => s.id === source.id);
+    if (currentDsIdx !== -1) {
+      this.lineItemDataSources.splice(currentDsIdx, 1);
+      deleteDocById('line_item_data_sources', source.id).catch(err => console.error('[Firestore] delete DataSource error:', err));
+    }
+
+    // 7. Update line item primary platform IDs if pointing to this source
+    if (lineItem) {
+      if (lineItem.platform_campaign_id === source.platform_campaign_id) {
+        const remaining = this.lineItemDataSources.filter(s => s.line_item_id === lineItemId && s.status === 'active');
+        if (remaining.length > 0) {
+          lineItem.platform_campaign_id = remaining[0].platform_campaign_id;
+          lineItem.platform_account_id = remaining[0].platform_account_id;
+        } else {
+          lineItem.platform_campaign_id = '';
+          lineItem.platform_account_id = '';
+        }
+        lineItem.updated_at = new Date().toISOString();
+        saveDoc('line_items', lineItem.id, lineItem).catch(err => console.error('[Firestore] update line_item error:', err));
+      }
+    }
+
+    // 8. Recalculate campaign budget
+    if (campaignId) {
+      this.recalculateCampaignBudget(campaignId);
+    }
+
+    // 9. Audit log
+    const currencyStr = lineItem?.currency || campaign?.currency || 'LKR';
+    this.addAuditLog({
+      agency_id: agencyId,
+      user_id: userId || 'user_active',
+      user_name: userName || 'Agency Media Planner',
+      action: 'UNLINKED_DATA_SOURCE',
+      entity_type: 'line_item',
+      entity_id: lineItemId,
+      details: `Unlinked ${source.platform.toUpperCase()} campaign "${source.platform_campaign_name}" (${source.platform_campaign_id}) from Line Item "${lineItem?.name || lineItemId}". Rolled back ${currencyStr} ${rolledBackSpend.toLocaleString()} spend and ${rolledBackImpressions.toLocaleString()} impressions from totals.`
+    });
+
+    return {
+      success: true,
+      message: `Unlinked ${source.platform_campaign_name}. Rolled back ${currencyStr} ${rolledBackSpend.toLocaleString()} spend and ${rolledBackImpressions.toLocaleString()} impressions from totals.`,
+      rolledBack: {
+        spend: rolledBackSpend,
+        impressions: rolledBackImpressions,
+        clicks: rolledBackClicks,
+        conversions: rolledBackConversions,
+        conversion_value: rolledBackConversionValue,
+        reach: rolledBackReach,
+        video_views: rolledBackVideoViews,
+        engagements: rolledBackEngagements,
+        metricRows: matchingMetrics.length
+      },
+      lineItemId,
+      campaignId
+    };
+  }
+
+  disconnectLineItemDataSource(
+    agencyId: string,
+    lineItemId: string,
+    sourceId: string,
+    userId?: string,
+    userName?: string,
+    rollbackTotals: boolean = true
+  ): LineItemDataSource & { rolledBack?: any } {
+    if (rollbackTotals) {
+      const unlinkRes = this.unlinkLineItemDataSource(agencyId, lineItemId, sourceId, userId, userName);
+      return {
+        id: sourceId,
+        line_item_id: lineItemId,
+        platform: 'meta',
+        platform_account_id: '',
+        platform_campaign_id: '',
+        platform_campaign_name: '',
+        linked_at: new Date().toISOString(),
+        status: 'disconnected',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        rolledBack: unlinkRes.rolledBack
+      };
+    }
+
     const source = this.lineItemDataSources.find(s => s.id === sourceId && s.line_item_id === lineItemId);
     if (!source) throw new Error('Data source mapping not found');
 
@@ -884,16 +1127,9 @@ class RelationalDatabase {
     saveDoc('line_item_data_sources', source.id, source).catch(err => console.error('[Firestore] disconnect DataSource error:', err));
 
     const lineItem = this.getLineItemById(agencyId, lineItemId);
-    this.addAuditLog({
-      agency_id: agencyId,
-      user_id: userId || 'user_active',
-      user_name: userName || 'Media Planner',
-      action: 'DISCONNECTED_DATA_SOURCE',
-      entity_type: 'line_item',
-      entity_id: lineItemId,
-      details: `Disconnected ${source.platform.toUpperCase()} campaign "${source.platform_campaign_name}" (${source.platform_campaign_id}) from Line Item "${lineItem?.name || lineItemId}". Historical metrics preserved.`
-    });
-
+    if (lineItem?.campaign_id) {
+      this.recalculateCampaignBudget(lineItem.campaign_id);
+    }
     return source;
   }
 
@@ -903,34 +1139,105 @@ class RelationalDatabase {
     sourceId: string,
     userId?: string,
     userName?: string
-  ): boolean {
-    const idx = this.lineItemDataSources.findIndex(s => s.id === sourceId && s.line_item_id === lineItemId);
-    if (idx === -1) return false;
+  ): { success: boolean; message: string; rolledBack?: any } {
+    return this.unlinkLineItemDataSource(agencyId, lineItemId, sourceId, userId, userName);
+  }
 
-    const [removed] = this.lineItemDataSources.splice(idx, 1);
-    deleteDocById('line_item_data_sources', sourceId).catch(err => console.error('[Firestore] delete DataSource error:', err));
+  unmapCampaign(
+    agencyId: string,
+    unmappedId: string,
+    userId?: string,
+    userName?: string
+  ): {
+    success: boolean;
+    message: string;
+    rolledBack: any;
+  } {
+    const unmapped = this.getUnmappedCampaignById(agencyId, unmappedId);
+    if (!unmapped) throw new Error('Campaign record not found');
 
-    // If it was in unmapped campaigns, restore unmapped status
-    const unmapped = this.unmappedCampaigns.find(u => u.platform_campaign_id === removed.platform_campaign_id);
-    if (unmapped) {
-      unmapped.status = 'unmapped';
-      unmapped.mapped_campaign_id = undefined;
-      unmapped.mapped_line_item_id = undefined;
-      saveDoc('unmapped_campaigns', unmapped.id, unmapped).catch(err => console.error('[Firestore] revert unmapped error:', err));
+    // Find any lineItemDataSource matching this platform_campaign_id
+    const source = this.lineItemDataSources.find(s => s.platform_campaign_id === unmapped.platform_campaign_id);
+    if (source) {
+      return this.unlinkLineItemDataSource(agencyId, source.line_item_id, source.id, userId, userName);
     }
 
-    const lineItem = this.getLineItemById(agencyId, lineItemId);
-    this.addAuditLog({
-      agency_id: agencyId,
-      user_id: userId || 'user_active',
-      user_name: userName || 'Media Planner',
-      action: 'UNLINKED_DATA_SOURCE',
-      entity_type: 'line_item',
-      entity_id: lineItemId,
-      details: `Removed data source mapping for ${removed.platform.toUpperCase()} campaign "${removed.platform_campaign_name}" (${removed.platform_campaign_id}) from Line Item "${lineItem?.name || lineItemId}"`
+    // Fallback: If source record was removed, find matching daily metrics by platform_campaign_id
+    const targetLineItemId = unmapped.mapped_line_item_id;
+    const targetCampaignId = unmapped.mapped_campaign_id;
+
+    const matchingMetrics = this.dailyMetrics.filter(m =>
+      m.agency_id === agencyId &&
+      (m.platform_campaign_id === unmapped.platform_campaign_id ||
+       (targetLineItemId && m.line_item_id === targetLineItemId))
+    );
+
+    const rolledBackSpend = matchingMetrics.reduce((sum, m) => sum + (Number(m.spend) || 0), 0);
+    const rolledBackImpressions = matchingMetrics.reduce((sum, m) => sum + (Number(m.impressions) || 0), 0);
+
+    const metricIdsToRemove = new Set(matchingMetrics.map(m => m.id));
+    this.dailyMetrics = this.dailyMetrics.filter(m => !metricIdsToRemove.has(m.id));
+    matchingMetrics.forEach(m => {
+      deleteDocById('daily_metrics', m.id).catch(() => {});
     });
 
-    return true;
+    unmapped.status = 'unmapped';
+    unmapped.mapped_campaign_id = undefined;
+    unmapped.mapped_line_item_id = undefined;
+    unmapped.updated_at = new Date().toISOString();
+    saveDoc('unmapped_campaigns', unmapped.id, unmapped).catch(() => {});
+
+    if (targetCampaignId) {
+      this.recalculateCampaignBudget(targetCampaignId);
+    }
+
+    return {
+      success: true,
+      message: `Unlinked campaign "${unmapped.platform_campaign_name}". Rolled back spend (${unmapped.currency} ${rolledBackSpend.toLocaleString()}) and metrics from campaign totals.`,
+      rolledBack: {
+        spend: rolledBackSpend,
+        impressions: rolledBackImpressions,
+        metricRows: matchingMetrics.length
+      }
+    };
+  }
+
+  unlinkCampaignDataSources(
+    agencyId: string,
+    campaignId: string,
+    userId?: string,
+    userName?: string
+  ): {
+    success: boolean;
+    message: string;
+    totalRolledBackSpend: number;
+    unlinkedSourcesCount: number;
+  } {
+    const lineItems = this.getLineItems(agencyId, campaignId);
+    let totalSpend = 0;
+    let unlinkedCount = 0;
+
+    for (const li of lineItems) {
+      const sources = this.lineItemDataSources.filter(s => s.line_item_id === li.id);
+      for (const src of sources) {
+        try {
+          const res = this.unlinkLineItemDataSource(agencyId, li.id, src.id, userId, userName);
+          totalSpend += res.rolledBack.spend;
+          unlinkedCount++;
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    this.recalculateCampaignBudget(campaignId);
+
+    return {
+      success: true,
+      message: `Unlinked ${unlinkedCount} data sources. Rolled back ${totalSpend.toLocaleString()} spend from campaign totals.`,
+      totalRolledBackSpend: totalSpend,
+      unlinkedSourcesCount: unlinkedCount
+    };
   }
 
   migrateLegacyLineItemDataSources(agencyId?: string): { migratedCount: number; details: string[] } {
@@ -1029,6 +1336,14 @@ class RelationalDatabase {
     };
     this.lineItemDataSources.push(newDs);
     saveDoc('line_item_data_sources', newDs.id, newDs).catch(() => {});
+
+    // If an unmapped campaign exists with this platform_campaign_id, remove it automatically
+    const unmappedIdx = this.unmappedCampaigns.findIndex(u => u.platform_campaign_id === params.platform_campaign_id);
+    if (unmappedIdx !== -1) {
+      const removedId = this.unmappedCampaigns[unmappedIdx].id;
+      this.deleteUnmappedCampaign(agencyId, removedId);
+    }
+
     return newDs;
   }
 
@@ -1390,14 +1705,23 @@ class RelationalDatabase {
       });
     }
 
-    // 4. Update unmapped campaign status
+    // 4. Ensure active LineItemDataSource is created and tracked
+    this.ensureLineItemDataSource(agencyId, {
+      line_item_id: targetLine.id,
+      platform: unmapped.platform,
+      platform_account_id: unmapped.platform_account_id,
+      platform_account_name: unmapped.platform_account_name,
+      platform_campaign_id: unmapped.platform_campaign_id,
+      platform_campaign_name: unmapped.platform_campaign_name,
+      linked_by: 'Unmapped Campaign Mapping'
+    });
+
+    // 4b. Update mapped campaign with mapped status and target references
     unmapped.status = 'mapped';
     unmapped.mapped_campaign_id = targetCampaign.id;
     unmapped.mapped_line_item_id = targetLine.id;
-    unmapped.client_id = targetCampaign.client_id;
-    unmapped.brand_id = targetCampaign.brand_id;
     unmapped.updated_at = new Date().toISOString();
-    saveDoc('unmapped_campaigns', unmapped.id, unmapped).catch(err => console.error('[Firestore] mapUnmappedCampaign error:', err));
+    saveDoc('unmapped_campaigns', unmapped.id, unmapped).catch(err => console.error('[Firestore] update unmapped status error:', err));
 
     // 5. Recalculate campaign budget
     this.recalculateCampaignBudget(targetCampaign.id);
@@ -1772,8 +2096,10 @@ class RelationalDatabase {
       end_date: '2026-09-20',
       budget: 500000,
       currency: 'LKR',
-      primary_kpi: 'cpm',
-      primary_kpi_target: 250,
+      primary_kpi: 'impressions',
+      primary_kpi_target: 2000000,
+      buying_kpi: 'cpm',
+      buying_kpi_target: 250,
       secondary_kpi_targets: {
         ctr: 1.2
       },
@@ -1798,8 +2124,10 @@ class RelationalDatabase {
       end_date: '2026-09-20',
       budget: 250000,
       currency: 'LKR',
-      primary_kpi: 'cpe',
-      primary_kpi_target: 5.0,
+      primary_kpi: 'engagements',
+      primary_kpi_target: 50000,
+      buying_kpi: 'cpe',
+      buying_kpi_target: 5.0,
       secondary_kpi_targets: {
         cpc: 25
       },
@@ -1824,10 +2152,12 @@ class RelationalDatabase {
       end_date: '2026-09-20',
       budget: 300000,
       currency: 'LKR',
-      primary_kpi: 'cpm',
-      primary_kpi_target: 200,
+      primary_kpi: 'video_views',
+      primary_kpi_target: 1500000,
+      buying_kpi: 'cpm',
+      buying_kpi_target: 200,
       secondary_kpi_targets: {
-        video_views: 1200000
+        video_views: 1500000
       },
       status: 'active',
       pacing_tolerance: 15,
@@ -1850,8 +2180,10 @@ class RelationalDatabase {
       end_date: '2026-09-15',
       budget: 450000,
       currency: 'LKR',
-      primary_kpi: 'cpa',
-      primary_kpi_target: 450,
+      primary_kpi: 'conversions',
+      primary_kpi_target: 1000,
+      buying_kpi: 'cpa',
+      buying_kpi_target: 450,
       status: 'active',
       pacing_tolerance: 15,
       created_at: '2026-08-28T10:00:00.000Z',
@@ -1873,8 +2205,10 @@ class RelationalDatabase {
       end_date: '2026-09-30',
       budget: 25000,
       currency: 'USD',
-      primary_kpi: 'roas',
-      primary_kpi_target: 3.5,
+      primary_kpi: 'conversions',
+      primary_kpi_target: 5000,
+      buying_kpi: 'roas',
+      buying_kpi_target: 3.5,
       status: 'active',
       pacing_tolerance: 15,
       created_at: '2026-08-30T10:00:00.000Z',
@@ -2339,6 +2673,67 @@ class RelationalDatabase {
         ]
       }
     );
+  }
+
+  /**
+   * Push the current in-memory state back to Firestore in bulk. Used by the
+   * "Sync to Firestore" admin action to force a full re-write, e.g. after
+   * data was edited directly in memory or a prior write was missed.
+   */
+  async resyncToFirestore(agencyId?: string): Promise<{
+    agencies: number;
+    clients: number;
+    brands: number;
+    campaigns: number;
+    lineItems: number;
+    alerts: number;
+  }> {
+    const agencies = agencyId ? this.agencies.filter(a => a.id === agencyId) : this.agencies;
+    const clients = agencyId ? this.clients.filter(c => c.agency_id === agencyId) : this.clients;
+    const brands = agencyId ? this.brands.filter(b => b.agency_id === agencyId) : this.brands;
+    const campaigns = agencyId ? this.campaigns.filter(c => c.agency_id === agencyId) : this.campaigns;
+    const lineItems = agencyId ? this.lineItems.filter(l => l.agency_id === agencyId) : this.lineItems;
+    const alerts = agencyId ? this.alerts.filter(a => a.agency_id === agencyId) : this.alerts;
+
+    await Promise.all([
+      batchSaveDocs('agencies', agencies),
+      batchSaveDocs('clients', clients),
+      batchSaveDocs('brands', brands),
+      batchSaveDocs('campaigns', campaigns),
+      batchSaveDocs('line_items', lineItems),
+      batchSaveDocs('alerts', alerts)
+    ]);
+
+    return {
+      agencies: agencies.length,
+      clients: clients.length,
+      brands: brands.length,
+      campaigns: campaigns.length,
+      lineItems: lineItems.length,
+      alerts: alerts.length
+    };
+  }
+
+  getFirestoreStatus(agencyId?: string): {
+    connected: boolean;
+    projectId: string;
+    databaseId: string;
+    syncedCounts: { agencies: number; clients: number; brands: number; campaigns: number; lineItems: number; alerts: number };
+  } {
+    const { projectId, databaseId } = getFirestoreConnectionInfo();
+    return {
+      connected: this.firestoreInitialized,
+      projectId,
+      databaseId,
+      syncedCounts: {
+        agencies: (agencyId ? this.agencies.filter(a => a.id === agencyId) : this.agencies).length,
+        clients: (agencyId ? this.clients.filter(c => c.agency_id === agencyId) : this.clients).length,
+        brands: (agencyId ? this.brands.filter(b => b.agency_id === agencyId) : this.brands).length,
+        campaigns: (agencyId ? this.campaigns.filter(c => c.agency_id === agencyId) : this.campaigns).length,
+        lineItems: (agencyId ? this.lineItems.filter(l => l.agency_id === agencyId) : this.lineItems).length,
+        alerts: (agencyId ? this.alerts.filter(a => a.agency_id === agencyId) : this.alerts).length
+      }
+    };
   }
 }
 

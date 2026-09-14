@@ -16,7 +16,7 @@ import {
 } from '../types';
 
 export class ApiService {
-  private static async request<T>(path: string, options: RequestInit = {}, agencyId?: string): Promise<T> {
+  private static async request<T>(path: string, options: RequestInit = {}, agencyId?: string, retries = 2): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options.headers as Record<string, string> || {})
@@ -25,23 +25,32 @@ export class ApiService {
       headers['x-agency-id'] = agencyId;
     }
 
-    const res = await fetch(path, {
-      ...options,
-      headers
-    });
+    try {
+      const res = await fetch(path, {
+        ...options,
+        headers
+      });
 
-    if (!res.ok) {
-      let errMsg = `Request failed: ${res.status} ${res.statusText}`;
-      try {
-        const errorData = await res.json();
-        if (errorData.error) errMsg = errorData.error;
-      } catch {
-        // Fallback
+      if (!res.ok) {
+        let errMsg = `Request failed: ${res.status} ${res.statusText}`;
+        try {
+          const errorData = await res.json();
+          if (errorData.error) errMsg = errorData.error;
+        } catch {
+          // Fallback
+        }
+        throw new Error(errMsg);
       }
-      throw new Error(errMsg);
-    }
 
-    return res.json();
+      return res.json();
+    } catch (err: any) {
+      // Retry once or twice if transient network failure (e.g. server starting up or connection reset)
+      if (retries > 0 && (!options.method || options.method === 'GET')) {
+        await new Promise(r => setTimeout(r, 400));
+        return this.request<T>(path, options, agencyId, retries - 1);
+      }
+      throw err;
+    }
   }
 
   // Agencies
@@ -133,6 +142,19 @@ export class ApiService {
     }, agencyId);
   }
 
+  static updateCampaign(agencyId: string, id: string, data: Partial<Campaign>): Promise<Campaign> {
+    return this.request<Campaign>(`/api/campaigns/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data)
+    }, agencyId);
+  }
+
+  static deleteCampaign(agencyId: string, id: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/api/campaigns/${id}`, {
+      method: 'DELETE'
+    }, agencyId);
+  }
+
   // Line Items
   static getLineItems(agencyId: string, campaignId?: string): Promise<LineItemCalculatedMetrics[]> {
     const q = campaignId ? `?campaign_id=${campaignId}` : '';
@@ -218,9 +240,43 @@ export class ApiService {
   static disconnectLineItemDataSource(
     agencyId: string,
     lineItemId: string,
+    sourceId: string,
+    rollback: boolean = true
+  ): Promise<LineItemDataSource & { rolledBack?: any }> {
+    return this.request<LineItemDataSource & { rolledBack?: any }>(`/api/line-items/${lineItemId}/data-sources/${sourceId}/disconnect`, {
+      method: 'POST',
+      body: JSON.stringify({ rollback })
+    }, agencyId);
+  }
+
+  static unlinkLineItemDataSource(
+    agencyId: string,
+    lineItemId: string,
     sourceId: string
-  ): Promise<LineItemDataSource> {
-    return this.request<LineItemDataSource>(`/api/line-items/${lineItemId}/data-sources/${sourceId}/disconnect`, {
+  ): Promise<{
+    success: boolean;
+    message: string;
+    rolledBack: {
+      spend: number;
+      impressions: number;
+      clicks: number;
+      conversions: number;
+      conversion_value: number;
+      reach: number;
+      video_views: number;
+      engagements: number;
+      metricRows: number;
+    };
+    lineItemId: string;
+    campaignId?: string;
+  }> {
+    return this.request<{
+      success: boolean;
+      message: string;
+      rolledBack: any;
+      lineItemId: string;
+      campaignId?: string;
+    }>(`/api/line-items/${lineItemId}/data-sources/${sourceId}/unlink`, {
       method: 'POST'
     }, agencyId);
   }
@@ -229,10 +285,23 @@ export class ApiService {
     agencyId: string,
     lineItemId: string,
     sourceId: string
-  ): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/api/line-items/${lineItemId}/data-sources/${sourceId}`, {
+  ): Promise<{ message: string; rolledBack?: any }> {
+    return this.request<{ message: string; rolledBack?: any }>(`/api/line-items/${lineItemId}/data-sources/${sourceId}`, {
       method: 'DELETE'
     }, agencyId);
+  }
+
+  static unlinkCampaignData(
+    agencyId: string,
+    campaignId: string
+  ): Promise<{ success: boolean; message: string; totalRolledBackSpend: number; unlinkedSourcesCount: number }> {
+    return this.request<{ success: boolean; message: string; totalRolledBackSpend: number; unlinkedSourcesCount: number }>(
+      `/api/campaigns/${campaignId}/unlink-data`,
+      {
+        method: 'POST'
+      },
+      agencyId
+    );
   }
 
   // Alerts
@@ -338,6 +407,19 @@ export class ApiService {
     );
   }
 
+  static unmapCampaign(
+    agencyId: string,
+    id: string
+  ): Promise<{ success: boolean; message: string; rolledBack: any }> {
+    return this.request<{ success: boolean; message: string; rolledBack: any }>(
+      `/api/unmapped-campaigns/${id}/unmap`,
+      {
+        method: 'POST'
+      },
+      agencyId
+    );
+  }
+
   static dismissUnmappedCampaign(agencyId: string, id: string): Promise<UnmappedCampaign> {
     return this.request<UnmappedCampaign>(
       `/api/unmapped-campaigns/${id}/dismiss`,
@@ -359,6 +441,13 @@ export class ApiService {
   }
 
   // System Administration & Data Management
+  static clearPlatformData(agencyId?: string): Promise<{ success: boolean; message: string; details?: any }> {
+    return this.request<{ success: boolean; message: string; details?: any }>('/api/system/clear-platform-data', {
+      method: 'POST',
+      body: JSON.stringify({ agency_id: agencyId })
+    });
+  }
+
   static clearAllData(): Promise<{ success: boolean; message: string; details?: any }> {
     return this.request<{ success: boolean; message: string; details?: any }>('/api/system/clear-all-data', {
       method: 'POST'

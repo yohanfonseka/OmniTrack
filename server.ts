@@ -5,15 +5,13 @@ import { HealthEngine } from './server/healthEngine.js';
 import { CsvEngine } from './server/csvEngine.js';
 
 async function startServer() {
-  // Hydrate all database state from Cloud Firestore before serving requests
-  try {
-    await db.initFirestore();
-  } catch (err) {
-    console.error('[Server] Failed to initialize Firestore hydration:', err);
-  }
-
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
+
+  // Hydrate all database state from Cloud Firestore in the background without blocking server startup
+  db.initFirestore().catch(err => {
+    console.warn('[Server] Firestore hydration notice:', err?.message || err);
+  });
 
   app.use(express.json({ limit: '15mb' }));
   app.use(express.urlencoded({ extended: true, limit: '15mb' }));
@@ -364,13 +362,40 @@ async function startServer() {
 
     const updated = db.updateCampaign(agencyId, req.params.id, req.body);
     if (!updated) return res.status(404).json({ error: 'Campaign not found' });
+
+    db.addAuditLog({
+      agency_id: agencyId,
+      user_id: req.body.user_id || 'system',
+      user_name: req.body.user_name || 'Agency User',
+      action: 'UPDATED_CAMPAIGN',
+      entity_type: 'campaign',
+      entity_id: updated.id,
+      details: `Updated campaign ${updated.name}`
+    });
+
+    HealthEngine.syncAlertsForAgency(agencyId);
     res.json(updated);
   });
 
   app.delete('/api/campaigns/:id', (req, res) => {
     const agencyId = getAgencyId(req);
+    const existing = db.getCampaignById(agencyId, req.params.id);
+    const campName = existing?.name || req.params.id;
+
     const success = db.deleteCampaign(agencyId, req.params.id);
     if (!success) return res.status(404).json({ error: 'Campaign not found' });
+
+    db.addAuditLog({
+      agency_id: agencyId,
+      user_id: 'system',
+      user_name: 'Agency User',
+      action: 'DELETED_CAMPAIGN',
+      entity_type: 'campaign',
+      entity_id: req.params.id,
+      details: `Deleted campaign ${campName} and all associated line items`
+    });
+
+    HealthEngine.syncAlertsForAgency(agencyId);
     res.json({ message: 'Campaign and associated line items deleted successfully' });
   });
 
@@ -458,14 +483,39 @@ async function startServer() {
     const agencyId = getAgencyId(req);
     const updated = db.updateLineItem(agencyId, req.params.id, req.body);
     if (!updated) return res.status(404).json({ error: 'Line item not found' });
+
+    db.addAuditLog({
+      agency_id: agencyId,
+      user_id: req.body.user_id || 'system',
+      user_name: req.body.user_name || 'Agency User',
+      action: 'UPDATED_LINE_ITEM',
+      entity_type: 'line_item',
+      entity_id: updated.id,
+      details: `Updated line item ${updated.name} on ${updated.platform}`
+    });
+
     HealthEngine.syncAlertsForAgency(agencyId);
     res.json(updated);
   });
 
   app.delete('/api/line-items/:id', (req, res) => {
     const agencyId = getAgencyId(req);
+    const existing = db.getLineItemById(agencyId, req.params.id);
+    const lineName = existing?.name || req.params.id;
+
     const success = db.deleteLineItem(agencyId, req.params.id);
     if (!success) return res.status(404).json({ error: 'Line item not found' });
+
+    db.addAuditLog({
+      agency_id: agencyId,
+      user_id: 'system',
+      user_name: 'Agency User',
+      action: 'DELETED_LINE_ITEM',
+      entity_type: 'line_item',
+      entity_id: req.params.id,
+      details: `Deleted line item ${lineName}`
+    });
+
     HealthEngine.syncAlertsForAgency(agencyId);
     res.json({ message: 'Line item deleted successfully' });
   });
@@ -538,12 +588,14 @@ async function startServer() {
   app.post('/api/line-items/:id/data-sources/:sourceId/disconnect', (req, res) => {
     const agencyId = getAgencyId(req);
     try {
+      const rollback = req.body?.rollback !== false;
       const disconnected = db.disconnectLineItemDataSource(
         agencyId,
         req.params.id,
         req.params.sourceId,
         req.body?.user_id,
-        req.body?.user_name
+        req.body?.user_name,
+        rollback
       );
       HealthEngine.syncAlertsForAgency(agencyId);
       res.json(disconnected);
@@ -552,21 +604,55 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/line-items/:id/data-sources/:sourceId', (req, res) => {
+  // Explicit Unlink & Rollback endpoint
+  app.post('/api/line-items/:id/data-sources/:sourceId/unlink', (req, res) => {
     const agencyId = getAgencyId(req);
     try {
-      const success = db.deleteLineItemDataSource(
+      const result = db.unlinkLineItemDataSource(
         agencyId,
         req.params.id,
         req.params.sourceId,
         req.body?.user_id,
         req.body?.user_name
       );
-      if (!success) return res.status(404).json({ error: 'Data source mapping not found' });
       HealthEngine.syncAlertsForAgency(agencyId);
-      res.json({ message: 'Data source mapping removed successfully' });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to unlink data source' });
+    }
+  });
+
+  app.delete('/api/line-items/:id/data-sources/:sourceId', (req, res) => {
+    const agencyId = getAgencyId(req);
+    try {
+      const result = db.unlinkLineItemDataSource(
+        agencyId,
+        req.params.id,
+        req.params.sourceId,
+        req.body?.user_id,
+        req.body?.user_name
+      );
+      HealthEngine.syncAlertsForAgency(agencyId);
+      res.json({ message: 'Data source unlinked successfully and totals rolled back', ...result });
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Failed to delete data source mapping' });
+    }
+  });
+
+  // Unlink all data sources for a campaign and roll back totals
+  app.post('/api/campaigns/:id/unlink-data', (req, res) => {
+    const agencyId = getAgencyId(req);
+    try {
+      const result = db.unlinkCampaignDataSources(
+        agencyId,
+        req.params.id,
+        req.body?.user_id,
+        req.body?.user_name
+      );
+      HealthEngine.syncAlertsForAgency(agencyId);
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to unlink campaign data' });
     }
   });
 
@@ -616,6 +702,38 @@ async function startServer() {
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Failed to map unmapped campaign' });
+    }
+  });
+
+  app.post('/api/unmapped-campaigns/:id/unmap', (req, res) => {
+    const agencyId = getAgencyId(req);
+    try {
+      const result = db.unmapCampaign(
+        agencyId,
+        req.params.id,
+        req.body?.user_id,
+        req.body?.user_name
+      );
+      HealthEngine.syncAlertsForAgency(agencyId);
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to unlink campaign' });
+    }
+  });
+
+  app.post('/api/unmapped-campaigns/:id/unlink', (req, res) => {
+    const agencyId = getAgencyId(req);
+    try {
+      const result = db.unmapCampaign(
+        agencyId,
+        req.params.id,
+        req.body?.user_id,
+        req.body?.user_name
+      );
+      HealthEngine.syncAlertsForAgency(agencyId);
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to unlink campaign' });
     }
   });
 
@@ -671,12 +789,14 @@ async function startServer() {
     const {
       client_id,
       brand_id,
+      campaign_id,
       platform,
       file_name,
       csv_content,
       column_mapping,
       campaign_matches,
-      currency
+      currency,
+      direct_to_unmapped
     } = req.body;
 
     if (!client_id || !brand_id || !platform || !csv_content) {
@@ -687,12 +807,14 @@ async function startServer() {
       agency_id: agencyId,
       client_id,
       brand_id,
+      campaign_id,
       platform,
       file_name: file_name || `${platform}_import_${Date.now()}.csv`,
       csv_content,
       column_mapping: column_mapping || {},
       campaign_matches: campaign_matches || {},
-      currency: currency || 'LKR'
+      currency: currency || 'LKR',
+      direct_to_unmapped: direct_to_unmapped !== false
     });
 
     res.status(202).json(job);
@@ -801,6 +923,34 @@ async function startServer() {
   });
 
   // ==================== SYSTEM ADMIN / DATA RESET ====================
+  app.post('/api/system/clear-platform-data', async (req, res) => {
+    try {
+      const agencyId = req.body.agency_id || (req.query.agency_id as string);
+      const result = await db.clearPlatformData(agencyId);
+      res.json({
+        success: true,
+        message: 'All platform data (unmapped campaigns, daily metrics, and platform data source mappings) cleared successfully.',
+        details: result
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to clear platform data' });
+    }
+  });
+
+  app.post('/api/unmapped-campaigns/clear', async (req, res) => {
+    try {
+      const agencyId = getAgencyId(req);
+      const result = await db.clearPlatformData(agencyId);
+      res.json({
+        success: true,
+        message: 'Platform campaigns and metrics cleared for current agency.',
+        details: result
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to clear platform data' });
+    }
+  });
+
   app.post('/api/system/clear-all-data', async (req, res) => {
     try {
       const result = await db.clearAllData();

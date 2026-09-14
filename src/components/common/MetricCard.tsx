@@ -53,7 +53,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
 
       <div className="flex items-baseline justify-between gap-2">
         <div className="text-2xl font-bold text-slate-900 tracking-tight">{value}</div>
-        {variance !== undefined && (
+        {typeof variance === 'number' && !isNaN(variance) && (
           <span
             className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-semibold ${getVarianceColor()}`}
             title={varianceLabel}
