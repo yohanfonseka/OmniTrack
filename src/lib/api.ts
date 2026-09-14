@@ -340,6 +340,13 @@ export class ApiService {
     return this.request<{ csv: string }>(`/api/imports/sample/${platform}`);
   }
 
+  static convertXlsxToCsv(fileBase64: string): Promise<{ csv: string }> {
+    return this.request<{ csv: string }>('/api/imports/convert-xlsx', {
+      method: 'POST',
+      body: JSON.stringify({ file_base64: fileBase64 })
+    });
+  }
+
   // Shares
   static getShares(agencyId: string): Promise<DashboardShare[]> {
     return this.request<DashboardShare[]>('/api/shares', {}, agencyId);

@@ -3,6 +3,7 @@ import path from 'path';
 import { db } from './server/db.js';
 import { HealthEngine } from './server/healthEngine.js';
 import { CsvEngine } from './server/csvEngine.js';
+import { XlsxEngine } from './server/xlsxEngine.js';
 
 async function startServer() {
   const app = express();
@@ -771,6 +772,19 @@ async function startServer() {
   app.get('/api/imports', (req, res) => {
     const agencyId = getAgencyId(req);
     res.json(db.getImports(agencyId));
+  });
+
+  // Converts an uploaded spreadsheet to CSV so .xlsx exports (TikTok Ads
+  // delivers these by default) feed the same preview/execute pipeline.
+  app.post('/api/imports/convert-xlsx', async (req, res) => {
+    const { file_base64 } = req.body;
+    if (!file_base64) return res.status(400).json({ error: 'file_base64 is required' });
+    try {
+      const csv = await XlsxEngine.convertToCsv(Buffer.from(String(file_base64), 'base64'));
+      res.json({ csv });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Could not read the uploaded spreadsheet.' });
+    }
   });
 
   app.post('/api/imports/preview', (req, res) => {

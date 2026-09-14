@@ -152,20 +152,45 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
   // Process uploaded or dropped file
   const processFile = (file: File) => {
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.csv') && file.type && !file.type.includes('csv') && !file.type.includes('text')) {
-      setErrorMsg('Please upload a valid .csv ad performance report file.');
+    const lowerName = file.name.toLowerCase();
+    const isSpreadsheet = lowerName.endsWith('.xlsx') || lowerName.endsWith('.xlsm');
+
+    if (!isSpreadsheet && !lowerName.endsWith('.csv') && file.type && !file.type.includes('csv') && !file.type.includes('text')) {
+      setErrorMsg('Please upload a .csv or .xlsx ad performance report file.');
       return;
     }
     setFileName(file.name);
     setErrorMsg(null);
+
     const reader = new FileReader();
+    reader.onerror = () => {
+      setErrorMsg(`Could not read the uploaded ${isSpreadsheet ? 'spreadsheet' : 'CSV'} file. Please try again.`);
+    };
+
+    if (isSpreadsheet) {
+      // Spreadsheets are converted to CSV server-side, then follow the same path as a .csv upload.
+      reader.onload = async event => {
+        try {
+          const bytes = new Uint8Array(event.target?.result as ArrayBuffer);
+          let binary = '';
+          for (let i = 0; i < bytes.length; i += 8192) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+          }
+          const { csv } = await ApiService.convertXlsxToCsv(btoa(binary));
+          setCsvContent(csv);
+          await handleParsePreview(csv, selectedPlatform);
+        } catch (err: any) {
+          setErrorMsg(err.message || 'Could not read the uploaded spreadsheet.');
+        }
+      };
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+
     reader.onload = async event => {
       const content = event.target?.result as string;
       setCsvContent(content);
       await handleParsePreview(content, selectedPlatform);
-    };
-    reader.onerror = () => {
-      setErrorMsg('Could not read the uploaded CSV file. Please try again.');
     };
     reader.readAsText(file);
   };
@@ -964,15 +989,20 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                   }`}
                 />
                 <p className="text-sm font-bold text-slate-800">
-                  {isDragging ? 'Drop your CSV report file right here!' : 'Drag & drop your exported CSV report here'}
+                  {isDragging ? 'Drop your report file right here!' : 'Drag & drop your exported report here'}
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
-                  Supports UTF-8 CSV reports from Meta Ads Manager, TikTok Ads, and Google Ads
+                  Supports CSV and Excel (.xlsx) reports from Meta Ads Manager, TikTok Ads, and Google Ads
                 </p>
                 <div className="mt-4">
                   <label className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs hover:border-slate-400 transition-colors">
                     <span>Browse Local File</span>
-                    <input type="file" accept=".csv,text/csv" onChange={handleFileUpload} className="hidden" />
+                    <input
+                      type="file"
+                      accept=".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
                   </label>
                 </div>
               </div>
