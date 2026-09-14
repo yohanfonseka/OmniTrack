@@ -14,8 +14,7 @@ steps:
   # Pinned to exactly 1 instance: app state lives in the server's memory
   # (hydrated from Firestore on boot), so running more than one instance
   # would let replicas diverge and clobber each other's Firestore writes.
-  - name: 'gcr.io/google-cloud-sdk/slim'
-    entrypoint: gcloud
+  - name: 'gcr.io/cloud-builders/gcloud'
     args:
       - run
       - deploy
