@@ -34,7 +34,7 @@ bun run start   # node dist/server.cjs, serves the built frontend + API
 `Dockerfile` and `cloudbuild.yaml` build a container image and deploy it to Cloud Run. Wire up continuous deployment once, from the target GCP project:
 
 ```
-gcloud artifacts repositories create omnitrack --repository-format=docker --location=us-central1
+gcloud artifacts repositories create omnitrack --repository-format=docker --location=asia-southeast1
 gcloud builds triggers create github \
   --name=omnitrack-deploy \
   --repo-owner=<your-github-owner> \
@@ -42,6 +42,10 @@ gcloud builds triggers create github \
   --branch-pattern="^main$" \
   --build-config=cloudbuild.yaml
 ```
+
+The Cloud Run service is named `omnitrack-app`, deliberately distinct from the
+`omnitrack` service that Google AI Studio deploys and manages itself — deploying
+over that one would replace the AI Studio app.
 
 Every push to `main` then rebuilds and redeploys automatically. The Cloud Run service's runtime service account is picked up automatically via Application Default Credentials — no key file needs to be deployed — but it needs Firestore read/write access (the `Cloud Datastore User` / `roles/datastore.user` IAM role) on the target project:
 

@@ -31,9 +31,12 @@ images:
   - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA'
 
 substitutions:
-  _REGION: us-central1
+  # asia-southeast1 keeps the app close to its users and to the existing
+  # AI Studio deployment. The service name must stay distinct from that
+  # AI-Studio-managed 'omnitrack' service so deploys never overwrite it.
+  _REGION: asia-southeast1
   _REPOSITORY: omnitrack
-  _SERVICE: omnitrack
+  _SERVICE: omnitrack-app
 
 options:
   logging: CLOUD_LOGGING_ONLY
