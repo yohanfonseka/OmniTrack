@@ -63,6 +63,73 @@ export interface ImportExecuteParams {
 }
 
 export class CsvEngine {
+  private static readonly MONTH_ABBR: Record<string, string> = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+  };
+
+  private static toIsoDate(year: number, month: number, day: number): string | null {
+    if (!year || month < 1 || month > 12 || day < 1 || day > 31) return null;
+    const iso = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const parsed = new Date(`${iso}T00:00:00Z`);
+    if (isNaN(parsed.getTime()) || parsed.getUTCDate() !== day || parsed.getUTCMonth() + 1 !== month) return null;
+    return iso;
+  }
+
+  /**
+   * Normalizes the shapes ad platform exports use for a single day (ISO,
+   * 12-Aug-2026, 09/14/2026, Excel serial numbers) to YYYY-MM-DD. Returns null
+   * when the value is not a usable date so callers can skip the row rather than
+   * file it under the wrong day.
+   */
+  static normalizeReportDate(raw: any): string | null {
+    if (raw === undefined || raw === null) return null;
+    if (raw instanceof Date && !isNaN(raw.getTime())) {
+      return CsvEngine.toIsoDate(raw.getUTCFullYear(), raw.getUTCMonth() + 1, raw.getUTCDate());
+    }
+
+    const value = String(raw).trim();
+    if (!value) return null;
+
+    // Excel serial day number (days since 1899-12-30)
+    if (/^\d{5}(\.\d+)?$/.test(value)) {
+      const serialDate = new Date(Math.round((parseFloat(value) - 25569) * 86400 * 1000));
+      if (isNaN(serialDate.getTime())) return null;
+      return CsvEngine.toIsoDate(serialDate.getUTCFullYear(), serialDate.getUTCMonth() + 1, serialDate.getUTCDate());
+    }
+
+    // 2026-09-14 / 2026/09/14, optionally followed by a time
+    let m = value.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (m) return CsvEngine.toIsoDate(+m[1], +m[2], +m[3]);
+
+    // 12-Aug-2026 / 12 Aug 2026 / 12-August-2026
+    m = value.match(/^(\d{1,2})[-\s]([A-Za-z]{3,})[-\s](\d{4})/);
+    if (m) {
+      const month = CsvEngine.MONTH_ABBR[m[2].slice(0, 3).toLowerCase()];
+      return month ? CsvEngine.toIsoDate(+m[3], +month, +m[1]) : null;
+    }
+
+    // Aug 12, 2026
+    m = value.match(/^([A-Za-z]{3,})\s+(\d{1,2}),?\s+(\d{4})/);
+    if (m) {
+      const month = CsvEngine.MONTH_ABBR[m[1].slice(0, 3).toLowerCase()];
+      return month ? CsvEngine.toIsoDate(+m[3], +month, +m[2]) : null;
+    }
+
+    // 09/14/2026 or 14/09/2026 - a leading value above 12 can only be the day
+    m = value.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{2,4})$/);
+    if (m) {
+      const first = +m[1];
+      const second = +m[2];
+      const year = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+      return first > 12
+        ? CsvEngine.toIsoDate(year, second, first)
+        : CsvEngine.toIsoDate(year, first, second);
+    }
+
+    return null;
+  }
+
   /**
    * Previews CSV, identifies headers, auto-detects platform patterns, and extracts distinct line items
    */
@@ -77,13 +144,18 @@ export class CsvEngine {
     const rows = parsed.data as Record<string, any>[];
     const preview_rows = rows.slice(0, 5);
 
-    // Detect platform
-    const headerLower = headers.map(h => h.toLowerCase());
+    // Detect platform from headers that only one platform's export produces.
+    const headerLower = headers.map(h => h.toLowerCase().trim());
+    const hasHeader = (...needles: string[]) =>
+      headerLower.some(h => needles.some(n => h === n || h.includes(n)));
+
     let detected_platform: PlatformType = 'meta';
-    if (
-      headerLower.some(h => h.includes('tiktok') || h.includes('tt_') || (h.includes('cost') && !headerLower.includes('amount spent')))
-    ) {
+    if (hasHeader('tiktok', 'tt_', 'ad group name', 'ad group id', 'cpc (destination)', 'ctr (destination)')) {
       detected_platform = 'tiktok';
+    } else if (hasHeader('ad set name', 'adset name', 'amount spent', 'attribution setting', 'delivery status')) {
+      detected_platform = 'meta';
+    } else if (hasHeader('google ads', 'ad group', 'cost')) {
+      detected_platform = 'google';
     }
 
     // Default mapping suggestions
@@ -107,16 +179,18 @@ export class CsvEngine {
       'objective'
     ];
 
-    // Note: Column A in Meta is 'Campaign name', Column B is 'Ad set name'
-    // Order of match rules is strictly prioritized so 'campaign_name' does not match 'ad set name'.
+    // Candidates are listed most-specific first. Two rules keep day-wise data
+    // correct: the per-day column ('Day' / 'By Day') must win over campaign
+    // start dates, and a real ad set / campaign id must win over 'Account ID'
+    // (which is identical on every row and would collapse distinct campaigns).
     const matchRules: Record<string, string[]> = {
       campaign_name: ['campaign name', 'campaign_name', 'campaign', 'campaigns'],
       line_item_name: ['ad set name', 'adset name', 'adset_name', 'line item name', 'line_item_name', 'ad group name', 'placement', 'line item'],
-      ad_name: ['ad name', 'ad_name', 'creative name', 'ad'],
-      report_date: ['reporting starts', 'reporting start', 'starts', 'report_date', 'reporting_date', 'start date', 'day', 'date', 'time'],
-      platform_campaign_id: ['ad set id', 'adset id', 'line item id', 'campaign id', 'campaign_id', 'platform_campaign_id', 'cid', 'id'],
+      ad_name: ['ad name', 'ad_name', 'creative name'],
+      report_date: ['day', 'by day', 'date', 'report_date', 'reporting_date', 'reporting starts', 'reporting start', 'start date', 'time'],
+      platform_campaign_id: ['ad group id', 'ad set id', 'adset id', 'line item id', 'campaign id', 'campaign_id', 'platform_campaign_id', 'cid'],
       ad_account_id: ['account id', 'ad account id', 'account_id', 'ad_account_id'],
-      spend: ['amount spent (lkr)', 'amount spent (usd)', 'amount spent', 'cost', 'spend', 'total spend'],
+      spend: ['amount spent (lkr)', 'amount spent (usd)', 'amount spent', 'spend', 'total spend', 'total cost', 'cost'],
       budget: ['budget', 'line item budget', 'daily budget', 'planned spend', 'total budget'],
       impressions: ['impressions', 'impr'],
       reach: ['reach', 'unique users'],
@@ -128,15 +202,24 @@ export class CsvEngine {
       objective: ['result type', 'objective', 'campaign objective']
     };
 
-    normalizedFields.forEach(norm => {
-      const candidates = matchRules[norm] || [];
-      for (const h of headers) {
-        const hLow = h.toLowerCase().trim();
-        if (candidates.some(c => hLow === c || hLow.includes(c))) {
-          suggested_mapping[norm] = h;
-          break;
-        }
+    // Matching is driven by candidate priority rather than by column order in
+    // the file: every candidate is tried as an exact header match first, then as
+    // a substring match.
+    const findHeader = (candidates: string[]): string | undefined => {
+      for (const c of candidates) {
+        const exact = headers.find(h => h.toLowerCase().trim() === c);
+        if (exact) return exact;
       }
+      for (const c of candidates) {
+        const partial = headers.find(h => h.toLowerCase().trim().includes(c));
+        if (partial) return partial;
+      }
+      return undefined;
+    };
+
+    normalizedFields.forEach(norm => {
+      const hit = findHeader(matchRules[norm] || []);
+      if (hit) suggested_mapping[norm] = hit;
     });
 
     // Extract distinct platform line items / campaigns from the CSV.
@@ -346,7 +429,22 @@ export class CsvEngine {
             const csvCampName = rawCamp || (defaultCampaign ? defaultCampaign.name : 'General Campaign');
             const csvAdSetName = rawAdSet || (rawCamp ? `Ad Set ${idx + 1}` : `Line Item ${idx + 1}`);
             const itemKey = rawCampId || `${csvCampName}:::${csvAdSetName}`;
-            const rawDate = String(row[map['report_date']] || '').trim();
+
+            // Every row is filed against one specific day. A row whose date
+            // cannot be read is skipped rather than defaulted, so it can never
+            // be recorded under the wrong day or duplicate a real one.
+            const reportDate = CsvEngine.normalizeReportDate(row[map['report_date']]);
+            if (!reportDate) {
+              skipped += 1;
+              if (errors.length < 50) {
+                errors.push(
+                  map['report_date']
+                    ? `Row ${idx + 1}: unreadable date in column "${map['report_date']}" - row skipped`
+                    : `Row ${idx + 1}: no date column mapped - row skipped`
+                );
+              }
+              return;
+            }
 
             // Helper to parse numeric fields safely
             const parseRowVal = (val: any) => {
@@ -400,25 +498,13 @@ export class CsvEngine {
                 });
               }
 
-              let formattedDate = rawDate;
-              if (rawDate && rawDate.includes('/')) {
-                const parts = rawDate.split('/');
-                if (parts.length === 3) {
-                  if (parts[2].length === 4) {
-                    formattedDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
-                  } else if (parts[0].length === 4) {
-                    formattedDate = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
-                  }
-                }
-              }
-
               const spendVal = parseRowVal(row[map['spend']]);
               const imprVal = parseRowVal(row[map['impressions']]);
               const clicksVal = parseRowVal(row[map['clicks']]);
               const convVal = parseRowVal(row[map['conversions']]);
 
               unmappedCollector.get(uKey)!.metrics.push({
-                report_date: formattedDate || '2026-09-08',
+                report_date: reportDate,
                 spend: spendVal,
                 impressions: imprVal,
                 reach: parseRowVal(row[map['reach']]) || Math.round(imprVal * 0.85),
@@ -616,25 +702,13 @@ export class CsvEngine {
                 });
               }
 
-              let formattedDate = rawDate;
-              if (rawDate && rawDate.includes('/')) {
-                const parts = rawDate.split('/');
-                if (parts.length === 3) {
-                  if (parts[2].length === 4) {
-                    formattedDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
-                  } else if (parts[0].length === 4) {
-                    formattedDate = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
-                  }
-                }
-              }
-
               const spendVal = parseRowVal(row[map['spend']]);
               const imprVal = parseRowVal(row[map['impressions']]);
               const clicksVal = parseRowVal(row[map['clicks']]);
               const convVal = parseRowVal(row[map['conversions']]);
 
               unmappedCollector.get(uKey)!.metrics.push({
-                report_date: formattedDate || '2026-09-08',
+                report_date: reportDate,
                 spend: spendVal,
                 impressions: imprVal,
                 reach: parseRowVal(row[map['reach']]) || Math.round(imprVal * 0.85),
@@ -660,16 +734,6 @@ export class CsvEngine {
               });
             }
 
-            // Format date YYYY-MM-DD
-            let formattedDate = rawDate;
-            if (rawDate.includes('/')) {
-              const parts = rawDate.split('/');
-              if (parts.length === 3) {
-                const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-                formattedDate = `${year}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
-              }
-            }
-
             const rowSpend = parseRowVal(row[map['spend']]);
             const rowImpr = parseRowVal(row[map['impressions']]);
             const rowReach = parseRowVal(row[map['reach']]);
@@ -678,7 +742,7 @@ export class CsvEngine {
             const rowConvVal = parseRowVal(row[map['conversion_value']]);
             const rowVideo = parseRowVal(row[map['video_views']]);
 
-            const dateKey = `${targetLine.id}:::${formattedDate || '2026-09-08'}`;
+            const dateKey = `${targetLine.id}:::${reportDate}`;
             let existingAccum = batchMetricsAccumulator.get(dateKey);
 
             if (!existingAccum) {
@@ -694,7 +758,7 @@ export class CsvEngine {
                   ad_account_id: String(row[map['ad_account_id']] || targetLine.platform_account_id || 'act_default'),
                   platform_campaign_id: rawCampId || itemKey,
                   campaign_name: `${csvCampName} › ${csvAdSetName}`,
-                  report_date: formattedDate || '2026-09-08',
+                  report_date: reportDate,
                   currency: params.currency || targetLine.currency,
                   spend: rowSpend,
                   impressions: rowImpr,
@@ -782,7 +846,9 @@ export class CsvEngine {
               brand_id: params.brand_id,
               platform: params.platform,
               platform_account_id: val.info.adAccountId,
-              platform_campaign_id: val.info.rawCampId || `cid_${Date.now()}`,
+              // Must stay stable across uploads - a timestamped id would make the
+              // same campaign look new on every re-import.
+              platform_campaign_id: val.info.rawCampId || val.info.rawCampName,
               platform_campaign_name: val.info.rawCampName,
               objective: val.info.objective,
               currency: val.info.currency,
