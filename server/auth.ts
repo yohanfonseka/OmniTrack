@@ -198,19 +198,29 @@ export async function createAccount(params: {
     existing.name = params.name || existing.name;
     existing.role = params.role;
     existing.agency_id = params.agency_id ?? existing.agency_id;
-    db.persistUser(existing);
+    if (!(await db.persistUser(existing))) {
+      throw new Error('The account could not be saved. It would be lost on the next restart, so it was not granted access.');
+    }
     return existing;
   }
 
-  return db.createUser({
+  // Optional fields are omitted rather than sent as undefined.
+  const user = db.createUser({
     email,
     name: params.name,
     role: params.role,
-    agency_id: params.agency_id,
-    client_id: params.client_id,
-    brand_id: params.brand_id,
+    ...(params.agency_id ? { agency_id: params.agency_id } : {}),
+    ...(params.client_id ? { client_id: params.client_id } : {}),
+    ...(params.brand_id ? { brand_id: params.brand_id } : {}),
     auth_uid: uid
   } as Omit<User, 'id' | 'created_at'>);
+
+  if (!(await db.persistUser(user))) {
+    // Do not report success for an account that exists only in this process.
+    db.deleteUser(user.id);
+    throw new Error('The account could not be saved. It would be lost on the next restart, so it was not granted access.');
+  }
+  return user;
 }
 
 /** True once any account has been linked to a Firebase identity. */

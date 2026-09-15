@@ -43,6 +43,9 @@ export function getFirestoreDb(): Firestore | null {
 
     const app = getApps().length > 0 ? getApp() : initializeApp({ credential, projectId });
     firestoreInstance = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
+    // Optional fields arrive as undefined all over this codebase; without this,
+    // Firestore rejects the whole document rather than omitting the field.
+    firestoreInstance.settings({ ignoreUndefinedProperties: true });
     console.log(`[Firestore Server] Connected via Admin SDK to project "${projectId}", database "${firestoreDatabaseId || '(default)'}"`);
     return firestoreInstance;
   } catch (err) {

@@ -351,13 +351,19 @@ class RelationalDatabase {
       created_at: new Date().toISOString()
     };
     this.users.push(newUser);
-    this.persistUser(newUser);
     return newUser;
   }
 
-  /** Accounts must outlive the process, or a restart locks everyone out. */
-  persistUser(user: User): void {
-    saveDoc('users', user.id, user).catch(err => console.error('[Firestore] persistUser error:', err));
+  /**
+   * Accounts must outlive the process, or a restart locks everyone out, so
+   * callers that create accounts await this and surface a failure rather than
+   * reporting success for a user that only exists in memory.
+   */
+  persistUser(user: User): Promise<boolean> {
+    return saveDoc('users', user.id, user).catch(err => {
+      console.error('[Firestore] persistUser error:', err);
+      return false;
+    });
   }
 
   deleteUser(id: string): boolean {
