@@ -441,7 +441,58 @@ export class CsvEngine {
         let skipped = 0;
         let unallocatedCount = 0;
         const errors: string[] = [];
+        // Parses numeric fields safely, tolerating thousands separators and
+        // currency symbols in platform exports.
+        const parseRowVal = (val: any) => {
+          if (val === undefined || val === null || val === '') return 0;
+          const clean = String(val).replace(/[^0-9.-]/g, '');
+          const num = parseFloat(clean);
+          return isNaN(num) ? 0 : num;
+        };
+
         const unmappedCollector = new Map<string, { info: any; metrics: any[] }>();
+
+        /**
+         * Folds a row into an unmapped campaign's metrics for its day.
+         *
+         * Platforms split one ad set's day across several rows (Meta breaks them
+         * out by delivery status), so rows must be combined per day exactly as
+         * the mapped path does. Appending them instead left the same date in the
+         * record twice, and a later re-import - which merges by date - silently
+         * dropped all but one of them.
+         */
+        const collectUnmappedMetric = (uKey: string, reportDate: string, row: Record<string, any>) => {
+          const entry = unmappedCollector.get(uKey)!;
+          const imprVal = parseRowVal(row[map['impressions']]);
+          const clicksVal = parseRowVal(row[map['clicks']]);
+          const reachVal = parseRowVal(row[map['reach']]) || Math.round(imprVal * 0.85);
+
+          const existing = entry.metrics.find(m => m.report_date === reportDate);
+          if (existing) {
+            existing.spend += parseRowVal(row[map['spend']]);
+            existing.impressions += imprVal;
+            // Reach counts distinct people, so it cannot be added up.
+            existing.reach = Math.max(existing.reach, reachVal);
+            existing.clicks += clicksVal;
+            existing.conversions += parseRowVal(row[map['conversions']]);
+            existing.conversion_value += parseRowVal(row[map['conversion_value']]);
+            existing.video_views += parseRowVal(row[map['video_views']]);
+            existing.engagements += clicksVal * 1.5;
+            return;
+          }
+
+          entry.metrics.push({
+            report_date: reportDate,
+            spend: parseRowVal(row[map['spend']]),
+            impressions: imprVal,
+            reach: reachVal,
+            clicks: clicksVal,
+            conversions: parseRowVal(row[map['conversions']]),
+            conversion_value: parseRowVal(row[map['conversion_value']]),
+            video_views: parseRowVal(row[map['video_views']]),
+            engagements: clicksVal * 1.5
+          });
+        };
 
         // Accumulator for daily metrics within this import batch to correctly sum
         // multiple rows (e.g., multiple ads within the same ad set on the same date)
@@ -479,14 +530,6 @@ export class CsvEngine {
               }
               return;
             }
-
-            // Helper to parse numeric fields safely
-            const parseRowVal = (val: any) => {
-              if (val === undefined || val === null || val === '') return 0;
-              const clean = String(val).replace(/[^0-9.-]/g, '');
-              const num = parseFloat(clean);
-              return isNaN(num) ? 0 : num;
-            };
 
             // Look up target mapping hierarchically:
             // 1. Specific (Campaign + Ad Set) key: "Campaign:::Ad Set"
@@ -532,22 +575,7 @@ export class CsvEngine {
                 });
               }
 
-              const spendVal = parseRowVal(row[map['spend']]);
-              const imprVal = parseRowVal(row[map['impressions']]);
-              const clicksVal = parseRowVal(row[map['clicks']]);
-              const convVal = parseRowVal(row[map['conversions']]);
-
-              unmappedCollector.get(uKey)!.metrics.push({
-                report_date: reportDate,
-                spend: spendVal,
-                impressions: imprVal,
-                reach: parseRowVal(row[map['reach']]) || Math.round(imprVal * 0.85),
-                clicks: clicksVal,
-                conversions: convVal,
-                conversion_value: parseRowVal(row[map['conversion_value']]),
-                video_views: parseRowVal(row[map['video_views']]),
-                engagements: clicksVal * 1.5
-              });
+              collectUnmappedMetric(uKey, reportDate, row);
 
               unallocatedCount += 1;
               return;
@@ -736,22 +764,7 @@ export class CsvEngine {
                 });
               }
 
-              const spendVal = parseRowVal(row[map['spend']]);
-              const imprVal = parseRowVal(row[map['impressions']]);
-              const clicksVal = parseRowVal(row[map['clicks']]);
-              const convVal = parseRowVal(row[map['conversions']]);
-
-              unmappedCollector.get(uKey)!.metrics.push({
-                report_date: reportDate,
-                spend: spendVal,
-                impressions: imprVal,
-                reach: parseRowVal(row[map['reach']]) || Math.round(imprVal * 0.85),
-                clicks: clicksVal,
-                conversions: convVal,
-                conversion_value: parseRowVal(row[map['conversion_value']]),
-                video_views: parseRowVal(row[map['video_views']]),
-                engagements: clicksVal * 1.5
-              });
+              collectUnmappedMetric(uKey, reportDate, row);
 
               unallocatedCount += 1;
               return; // Halt: do not ingest row into daily_metrics
