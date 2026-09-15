@@ -68,3 +68,18 @@ gcloud projects add-iam-policy-binding <PROJECT_ID> \
 | `FIREBASE_PROJECT_ID` | Overrides the project ID from `firebase-applet-config.json` | from config file |
 | `FIRESTORE_DATABASE_ID` | Overrides the Firestore database ID from `firebase-applet-config.json` | from config file |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to a service account key file (only needed outside GCP, or to override the attached service account) | Application Default Credentials |
+| `ADMIN_BOOTSTRAP_TOKEN` | Secret required by `POST /api/auth/bootstrap` to create the very first administrator | unset (bootstrap disabled) |
+| `ENABLE_DESTRUCTIVE_TESTING` | `true` exposes the cross-tenant "Delete All Data" and "Re-seed Demo Dataset" controls. Leave unset on any deployment holding customer data — the routes return 404 and the buttons do not render | unset (disabled) |
+
+Testing helpers are opt-in, so a customer-facing deployment needs no code change
+to remove them:
+
+```bash
+# enable while testing
+gcloud run services update omnitrack-app --region=asia-southeast1 \
+  --update-env-vars ENABLE_DESTRUCTIVE_TESTING=true
+
+# remove before customers rely on the data
+gcloud run services update omnitrack-app --region=asia-southeast1 \
+  --remove-env-vars ENABLE_DESTRUCTIVE_TESTING
+```

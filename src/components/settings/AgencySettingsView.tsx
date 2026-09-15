@@ -37,6 +37,10 @@ export const AgencySettingsView: React.FC = () => {
   const [isInviting, setIsInviting] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
 
+  // The cross-tenant testing controls only exist when the server opts in, so
+  // ask before offering them rather than showing buttons that cannot work.
+  const [testingToolsEnabled, setTestingToolsEnabled] = useState(false);
+
   const canManageUsers = currentUser.role === 'super_user' || currentUser.role === 'agency_admin';
 
   const reloadUsers = () => {
@@ -87,6 +91,12 @@ export const AgencySettingsView: React.FC = () => {
     setBaseCurrency((currentAgency.base_currency || 'LKR').toUpperCase());
     setRates(currentAgency.exchange_rates || { USD: 305 });
   }, [currentAgency]);
+
+  useEffect(() => {
+    ApiService.getSystemCapabilities()
+      .then(caps => setTestingToolsEnabled(Boolean(caps.destructive_testing)))
+      .catch(() => setTestingToolsEnabled(false));
+  }, []);
 
   const handleSaveCurrency = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -398,7 +408,8 @@ export const AgencySettingsView: React.FC = () => {
               Data Management & Testing
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Wipe all clients, campaigns, line items, and metrics to test ingestion and reporting completely from scratch.
+              Clear imported platform data for this agency. The full wipe and demo
+              re-seed controls only appear on deployments running in testing mode.
             </p>
           </div>
         </div>
@@ -423,41 +434,45 @@ export const AgencySettingsView: React.FC = () => {
             <span>Clear Platform Data Only</span>
           </button>
 
-          <button
-            type="button"
-            onClick={async () => {
-              if (window.confirm('Are you sure you want to delete ALL data? This will clear all clients, brands, campaigns, line items, and metrics across Firestore to test from scratch.')) {
+          {testingToolsEnabled && (
+            <>
+            <button
+              type="button"
+              onClick={async () => {
+                if (window.confirm('Are you sure you want to delete ALL data? This will clear all clients, brands, campaigns, line items, and metrics across Firestore to test from scratch.')) {
+                  try {
+                    const res = await ApiService.clearAllData();
+                    setSavedNote(res.message || 'All data wiped successfully. Dashboard is fresh and clean.');
+                    window.dispatchEvent(new CustomEvent('refresh-omnitrack'));
+                    window.dispatchEvent(new CustomEvent('campaigns-updated'));
+                  } catch (err: any) {
+                    alert(err.message || 'Failed to clear data');
+                  }
+                }
+              }}
+              className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center gap-2"
+            >
+              <span>Delete All Data (Test from Scratch)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={async () => {
                 try {
-                  const res = await ApiService.clearAllData();
-                  setSavedNote(res.message || 'All data wiped successfully. Dashboard is fresh and clean.');
+                  const res = await ApiService.seedDemoData();
+                  setSavedNote(res.message || 'Demo dataset re-seeded successfully.');
                   window.dispatchEvent(new CustomEvent('refresh-omnitrack'));
                   window.dispatchEvent(new CustomEvent('campaigns-updated'));
                 } catch (err: any) {
-                  alert(err.message || 'Failed to clear data');
+                  alert(err.message || 'Failed to seed demo data');
                 }
-              }
-            }}
-            className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center gap-2"
-          >
-            <span>Delete All Data (Test from Scratch)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={async () => {
-              try {
-                const res = await ApiService.seedDemoData();
-                setSavedNote(res.message || 'Demo dataset re-seeded successfully.');
-                window.dispatchEvent(new CustomEvent('refresh-omnitrack'));
-                window.dispatchEvent(new CustomEvent('campaigns-updated'));
-              } catch (err: any) {
-                alert(err.message || 'Failed to seed demo data');
-              }
-            }}
-            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors"
-          >
-            <span>Re-seed Demo Dataset</span>
-          </button>
+              }}
+              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors"
+            >
+              <span>Re-seed Demo Dataset</span>
+            </button>
+            </>
+          )}
         </div>
       </div>
     </div>

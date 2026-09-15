@@ -514,4 +514,8 @@ export class ApiService {
       method: 'POST'
     });
   }
+
+  static getSystemCapabilities(): Promise<{ destructive_testing: boolean }> {
+    return this.request<{ destructive_testing: boolean }>('/api/system/capabilities');
+  }
 }

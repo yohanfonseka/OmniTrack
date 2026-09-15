@@ -34,6 +34,22 @@ async function startServer() {
   // than from a client-supplied header.
   const getAgencyId = (req: express.Request): string => resolveAgencyId(req as AuthedRequest);
 
+  // The wipe-everything and re-seed helpers are test scaffolding: they act
+  // across every tenant, so they only exist while the service is started with
+  // ENABLE_DESTRUCTIVE_TESTING=true. Dropping that variable from the
+  // deployment is all it takes to remove them from a customer-facing build.
+  const destructiveTestingEnabled = process.env.ENABLE_DESTRUCTIVE_TESTING === 'true';
+  const requireDestructiveTesting = (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction
+  ) => {
+    if (!destructiveTestingEnabled) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    next();
+  };
+
   // ==================== HEALTH & METADATA ====================
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', server_time: new Date().toISOString() });
@@ -89,6 +105,16 @@ async function startServer() {
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Could not create the administrator.' });
     }
+  });
+
+  // Registered ahead of the auth wall so that when testing mode is off these
+  // paths do not exist at all, and so the UI can ask whether to show them.
+  app.use(
+    ['/api/system/clear-all-data', '/api/system/seed-demo-data'],
+    requireDestructiveTesting
+  );
+  app.get('/api/system/capabilities', (req, res) => {
+    res.json({ destructive_testing: destructiveTestingEnabled });
   });
 
   // Everything past this point requires a verified session.
@@ -1061,8 +1087,8 @@ async function startServer() {
     }
   });
 
-  // Wipes data for EVERY agency, not just the caller's, so it is restricted to
-  // the platform owner. It should become agency-scoped before customers rely on it.
+  // Wipes data for EVERY agency, not just the caller's. Off unless the
+  // deployment opts in, and then still restricted to the platform owner.
   app.post('/api/system/clear-all-data', requireRole('super_user'), async (req, res) => {
     try {
       const result = await db.clearAllData();
@@ -1072,7 +1098,7 @@ async function startServer() {
     }
   });
 
-  // Seeds demo records into shared state; platform owner only.
+  // Seeds demo records into shared state; same opt-in and platform owner only.
   app.post('/api/system/seed-demo-data', requireRole('super_user'), async (req, res) => {
     try {
       db.seedDemoClientsAndCampaigns();
