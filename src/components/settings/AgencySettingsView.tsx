@@ -11,20 +11,58 @@ import {
   CheckCircle2,
   Lock,
   Mail,
-  Building2
+  Building2,
+  Coins
 } from 'lucide-react';
 import { FormattedNumberInput } from '../common/FormattedNumberInput';
 
+const SUPPORTED_CURRENCIES = ['LKR', 'USD', 'EUR', 'GBP', 'AUD', 'INR', 'SGD'];
+
 export const AgencySettingsView: React.FC = () => {
-  const { currentAgency, currentUser } = useAuth();
+  const { currentAgency, currentUser, refreshAgencies } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [pacingThreshold, setPacingThreshold] = useState<number>(15);
   const [savedNote, setSavedNote] = useState<string | null>(null);
 
+  const [baseCurrency, setBaseCurrency] = useState<string>('LKR');
+  const [rates, setRates] = useState<Record<string, number>>({});
+  const [savingCurrency, setSavingCurrency] = useState(false);
+  const [currencyError, setCurrencyError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!currentAgency) return;
     ApiService.getUsers(currentAgency.id).then(setUsers).catch(console.error);
+    setBaseCurrency((currentAgency.base_currency || 'LKR').toUpperCase());
+    setRates(currentAgency.exchange_rates || { USD: 305 });
   }, [currentAgency]);
+
+  const handleSaveCurrency = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentAgency) return;
+    setCurrencyError(null);
+
+    // A zero or missing rate silently leaves amounts unconverted, so reject it here.
+    const invalid = Object.entries(rates).find(([, value]) => !Number.isFinite(Number(value)) || Number(value) <= 0);
+    if (invalid) {
+      setCurrencyError(`Enter a rate greater than zero for ${invalid[0]}.`);
+      return;
+    }
+
+    setSavingCurrency(true);
+    try {
+      await ApiService.updateAgency(currentAgency.id, {
+        base_currency: baseCurrency,
+        exchange_rates: rates
+      });
+      await refreshAgencies();
+      setSavedNote(`Reporting currency set to ${baseCurrency}. Cross-currency totals now convert using these rates.`);
+      setTimeout(() => setSavedNote(null), 4000);
+    } catch (err: any) {
+      setCurrencyError(err.message || 'Could not save currency settings.');
+    } finally {
+      setSavingCurrency(false);
+    }
+  };
 
   const handleSavePreferences = (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,6 +153,73 @@ export const AgencySettingsView: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {/* Reporting Currency & Exchange Rates */}
+      <form onSubmit={handleSaveCurrency} className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs space-y-4">
+        <div className="pb-3 border-b border-slate-100">
+          <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+            <Coins className="w-4 h-4 text-indigo-600" />
+            Reporting Currency
+          </h3>
+          <p className="text-xs text-slate-500 mt-1">
+            Campaigns that mix platforms in different currencies are rolled up into this currency using the rates below.
+          </p>
+        </div>
+
+        <div className="space-y-4 text-xs">
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">Base currency</label>
+            <select
+              value={baseCurrency}
+              onChange={e => setBaseCurrency(e.target.value)}
+              className="w-40 px-3 py-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-500 font-medium bg-white"
+            >
+              {SUPPORTED_CURRENCIES.map(code => (
+                <option key={code} value={code}>{code}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <span className="block font-semibold text-slate-700 mb-2">Exchange rates</span>
+            <div className="space-y-2">
+              {SUPPORTED_CURRENCIES.filter(code => code !== baseCurrency).map(code => (
+                <div key={code} className="flex items-center gap-2">
+                  <span className="w-28 text-slate-600 font-mono">1 {code} =</span>
+                  <FormattedNumberInput
+                    value={rates[code] ?? 0}
+                    onChange={val => setRates(prev => ({ ...prev, [code]: val || 0 }))}
+                    className="w-32 px-3 py-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-500 font-mono font-medium"
+                    maxFractionDigits={4}
+                  />
+                  <span className="text-slate-600 font-mono">{baseCurrency}</span>
+                  {!rates[code] && (
+                    <span className="text-[11px] text-amber-700">
+                      No rate set - {code} amounts are left unconverted
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {currencyError && (
+            <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-[11px] text-rose-800">
+              {currencyError}
+            </div>
+          )}
+
+          <div className="pt-1">
+            <button
+              type="submit"
+              disabled={savingCurrency}
+              className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-800 shadow-2xs disabled:opacity-50"
+            >
+              {savingCurrency ? 'Saving...' : 'Save Currency Settings'}
+            </button>
+          </div>
+        </div>
+      </form>
 
       {/* Pacing & Health Monitoring Rules */}
       <form onSubmit={handleSavePreferences} className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs space-y-4">

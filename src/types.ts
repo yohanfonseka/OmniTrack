@@ -27,6 +27,10 @@ export interface Agency {
   max_clients: number;
   max_campaigns: number;
   contact_email: string;
+  /** Currency every cross-currency rollup is reported in. Defaults to LKR. */
+  base_currency?: string;
+  /** Units of base_currency per 1 unit of the keyed currency, e.g. { USD: 305 } when base is LKR. */
+  exchange_rates?: Record<string, number>;
   created_at: string;
   updated_at: string;
 }

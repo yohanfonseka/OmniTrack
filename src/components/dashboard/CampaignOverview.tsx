@@ -222,7 +222,7 @@ export const CampaignOverview: React.FC<CampaignOverviewProps> = ({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-bold text-slate-900">Multi-Currency Consolidated Campaign (USD + LKR)</span>
                 <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-white border border-indigo-200 text-indigo-700 font-medium">
-                  Exchange Rate: 1 USD = {formatNumber(campaignMetrics.usd_to_lkr_rate || 305, 2)} LKR
+                  Exchange Rate: 1 USD = {formatNumber(campaignMetrics.exchange_rate || 0, 2)} {currency}
                 </span>
               </div>
               <p className="text-slate-600 text-[11px] leading-relaxed">

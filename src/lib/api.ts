@@ -65,6 +65,13 @@ export class ApiService {
     });
   }
 
+  static updateAgency(agencyId: string, data: Partial<Agency>): Promise<Agency> {
+    return this.request<Agency>(`/api/agencies/${agencyId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data)
+    });
+  }
+
   // Users
   static getUsers(agencyId?: string): Promise<User[]> {
     const q = agencyId ? `?agency_id=${agencyId}` : '';

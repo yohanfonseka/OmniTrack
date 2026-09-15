@@ -31,7 +31,6 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
   const [endDate, setEndDate] = useState('2026-09-30');
   const [status, setStatus] = useState<'draft' | 'active' | 'paused' | 'completed'>('active');
   const [currency, setCurrency] = useState('LKR');
-  const [usdToLkrRate, setUsdToLkrRate] = useState(305);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,7 +87,6 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
         start_date: startDate,
         end_date: endDate,
         currency,
-        usd_to_lkr_rate: usdToLkrRate,
         status
       });
 
@@ -251,7 +249,7 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
               In OmniTrack, <strong>there is no manually entered campaign-level budget</strong>. Once this campaign is created, you can add line items for Meta, TikTok, Google Ads, etc., with their individual budgets and Primary KPIs. The campaign metrics will rollup automatically.
             </p>
             <div className="pt-1 flex items-center justify-between text-[11px] text-slate-500">
-              <span>Conversion Rate: <strong>1 USD = {usdToLkrRate} LKR</strong></span>
+              <span>Mixed-currency line items convert using the rates in <strong>Settings</strong></span>
               <span className="font-medium text-indigo-700">Line Items support USD and LKR</span>
             </div>
           </div>

@@ -28,7 +28,6 @@ export const EditCampaignModal: React.FC<EditCampaignModalProps> = ({
   const [endDate, setEndDate] = useState(campaign.end_date || '2026-09-30');
   const [status, setStatus] = useState<'draft' | 'active' | 'paused' | 'completed'>(campaign.status || 'active');
   const [currency, setCurrency] = useState(campaign.currency || 'LKR');
-  const [usdToLkrRate, setUsdToLkrRate] = useState(campaign.usd_to_lkr_rate || 305);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,7 +54,6 @@ export const EditCampaignModal: React.FC<EditCampaignModalProps> = ({
         start_date: startDate,
         end_date: endDate,
         currency,
-        usd_to_lkr_rate: Number(usdToLkrRate) || 305,
         status
       });
 
@@ -227,19 +225,6 @@ export const EditCampaignModal: React.FC<EditCampaignModalProps> = ({
                 </select>
               </div>
 
-              <div>
-                <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  1 USD to LKR Exchange Rate
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="1"
-                  value={usdToLkrRate}
-                  onChange={e => setUsdToLkrRate(parseFloat(e.target.value) || 305)}
-                  className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-slate-800 text-xs bg-white font-mono"
-                />
-              </div>
             </div>
 
             <p className="text-[11px] text-slate-500">

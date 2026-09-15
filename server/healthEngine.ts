@@ -12,6 +12,47 @@ import {
 import { db } from './db.js';
 
 export class HealthEngine {
+  /** Used when an agency has not configured its own base currency and rates yet. */
+  private static readonly DEFAULT_BASE_CURRENCY = 'LKR';
+  private static readonly DEFAULT_EXCHANGE_RATES: Record<string, number> = { USD: 305 };
+
+  static getAgencyCurrencySettings(agencyId: string): { base_currency: string; exchange_rates: Record<string, number> } {
+    const agency = db.getAgencyById(agencyId);
+    const base = (agency?.base_currency || HealthEngine.DEFAULT_BASE_CURRENCY).toUpperCase();
+    const configured = agency?.exchange_rates;
+    const rates = configured && Object.keys(configured).length > 0
+      ? configured
+      : HealthEngine.DEFAULT_EXCHANGE_RATES;
+    return { base_currency: base, exchange_rates: rates };
+  }
+
+  /**
+   * Builds a converter into `targetCurrency` using the agency's configured
+   * rates, which are expressed as units of the base currency per 1 unit of the
+   * quoted currency. An amount in an unconfigured currency is returned
+   * unchanged rather than silently scaled by a guess.
+   */
+  static getCurrencyConverter(agencyId: string, targetCurrency: string): (amount: number, fromCurrency?: string) => number {
+    const { base_currency, exchange_rates } = HealthEngine.getAgencyCurrencySettings(agencyId);
+    const target = (targetCurrency || base_currency).toUpperCase();
+
+    const unitsOfBase = (code: string): number | null => {
+      const upper = code.toUpperCase();
+      if (upper === base_currency) return 1;
+      const rate = Number(exchange_rates[upper]);
+      return Number.isFinite(rate) && rate > 0 ? rate : null;
+    };
+
+    return (amount: number, fromCurrency?: string) => {
+      const from = (fromCurrency || target).toUpperCase();
+      if (from === target) return amount;
+      const fromRate = unitsOfBase(from);
+      const targetRate = unitsOfBase(target);
+      if (fromRate === null || targetRate === null) return amount;
+      return (amount * fromRate) / targetRate;
+    };
+  }
+
   /**
    * Calculates difference in days between two YYYY-MM-DD dates inclusive
    */
@@ -395,17 +436,10 @@ export class HealthEngine {
       platformMap.set(plat, list);
     });
 
-    const campaignCurrency = (campaign?.currency || 'LKR').toUpperCase();
-    const rate = campaign?.usd_to_lkr_rate || 305;
-
-    const toCampaignCurr = (amt: number, fromCurrency?: string) => {
-      const from = (fromCurrency || campaignCurrency).toUpperCase();
-      const to = campaignCurrency;
-      if (from === to) return amt;
-      if (from === 'USD' && to === 'LKR') return amt * rate;
-      if (from === 'LKR' && to === 'USD') return amt / rate;
-      return amt;
-    };
+    const campaignCurrency = (campaign?.currency || HealthEngine.DEFAULT_BASE_CURRENCY).toUpperCase();
+    const toCampaignCurr = campaign
+      ? HealthEngine.getCurrencyConverter(campaign.agency_id, campaignCurrency)
+      : (amt: number) => amt;
 
     const results: PlatformCalculatedMetrics[] = [];
 
@@ -497,17 +531,10 @@ export class HealthEngine {
     const lineItemCalculated = lineItems.map(item => this.calculateLineItemMetrics(agencyId, item));
     const platforms = this.calculatePlatformBreakdown(lineItemCalculated, campaign);
 
-    const rate = campaign.usd_to_lkr_rate || 305;
-    const campaignCurrency = (campaign.currency || 'LKR').toUpperCase();
-
-    const toCampaignCurrency = (amt: number, fromCurrency?: string) => {
-      const from = (fromCurrency || campaignCurrency).toUpperCase();
-      const to = campaignCurrency;
-      if (from === to) return amt;
-      if (from === 'USD' && to === 'LKR') return amt * rate;
-      if (from === 'LKR' && to === 'USD') return amt / rate;
-      return amt;
-    };
+    const campaignCurrency = (campaign.currency || HealthEngine.DEFAULT_BASE_CURRENCY).toUpperCase();
+    const toCampaignCurrency = HealthEngine.getCurrencyConverter(agencyId, campaignCurrency);
+    // Surfaced for display: what 1 USD is worth in this campaign's currency.
+    const rate = toCampaignCurrency(1, 'USD');
 
     // Calculate currency breakdown
     const currencyMap: Record<string, { budget: number; spend: number; expected_spend: number }> = {};
