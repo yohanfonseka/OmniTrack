@@ -69,25 +69,24 @@ async function signInWithPassword(email: string, password: string): Promise<stri
   return body.idToken as string;
 }
 
-/** Links a verified Firebase identity to this app's user record, matched on email. */
-function findAppUser(email: string, uid: string): User | undefined {
-  const normalized = (email || '').trim().toLowerCase();
-  const existing = db.users.find(
-    u => u.auth_uid === uid || (u.email || '').trim().toLowerCase() === normalized
-  );
-  if (existing && !existing.auth_uid) {
-    // Remember the binding so a later email change does not orphan the account.
-    existing.auth_uid = uid;
-    db.persistUser(existing);
-  }
-  return existing;
+/**
+ * Resolves a verified Firebase identity to its app account, strictly by uid.
+ *
+ * Matching on email would be unsafe: Firebase's accounts:signUp REST endpoint
+ * is callable by anyone holding the (public) web API key, so a stranger could
+ * register an address that happens to match a seeded account and inherit its
+ * role. A uid is only ever attached by bootstrap or by an admin invite, so
+ * access must be granted deliberately.
+ */
+function findAppUser(uid: string): User | undefined {
+  return db.users.find(u => u.auth_uid === uid);
 }
 
 export async function loginWithPassword(email: string, password: string): Promise<{ cookie: string; user: User }> {
   const idToken = await signInWithPassword(email, password);
   const decoded = await getAuth().verifyIdToken(idToken);
 
-  const user = findAppUser(decoded.email || email, decoded.uid);
+  const user = findAppUser(decoded.uid);
   if (!user) {
     // Authenticating against Firebase is not enough: the account must also have
     // been granted access to an agency by an admin.
@@ -120,7 +119,7 @@ export async function requireAuth(req: AuthedRequest, res: express.Response, nex
 
   try {
     const decoded = await getAuth().verifySessionCookie(cookie, true);
-    const user = findAppUser(decoded.email || '', decoded.uid);
+    const user = findAppUser(decoded.uid);
     if (!user) return res.status(403).json({ error: 'This account has no OmniTrack access.' });
     req.appUser = user;
     next();
@@ -182,9 +181,12 @@ export async function createAccount(params: {
     uid = created.uid;
   } catch (err: any) {
     if (err?.code === 'auth/email-already-exists') {
-      // Reuse the existing identity so an invite can attach access to someone
-      // who already has a Firebase account.
+      // A Firebase identity already exists for this address. Reuse it, but reset
+      // the credential to the one the admin just chose: anyone can pre-register
+      // an arbitrary email with Firebase, and reusing their password as-is would
+      // hand them the access being granted here.
       uid = (await getAuth().getUserByEmail(email)).uid;
+      await getAuth().updateUser(uid, { password: params.password, displayName: params.name });
     } else {
       throw new Error(err?.message || 'Could not create the account.');
     }
