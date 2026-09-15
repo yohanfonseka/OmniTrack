@@ -1008,8 +1008,7 @@ async function startServer() {
 
   // ==================== AUDIT LOGS ====================
   app.get('/api/audit-logs', (req, res) => {
-    const agencyId = req.query.agency_id as string;
-    res.json(db.getAuditLogs(agencyId));
+    res.json(db.getAuditLogs(getAgencyId(req)));
   });
 
   // ==================== SUPER USER STATS ====================
@@ -1037,8 +1036,7 @@ async function startServer() {
   // ==================== SYSTEM ADMIN / DATA RESET ====================
   app.post('/api/system/clear-platform-data', async (req, res) => {
     try {
-      const agencyId = req.body.agency_id || (req.query.agency_id as string);
-      const result = await db.clearPlatformData(agencyId);
+      const result = await db.clearPlatformData(getAgencyId(req));
       res.json({
         success: true,
         message: 'All platform data (unmapped campaigns, daily metrics, and platform data source mappings) cleared successfully.',
@@ -1063,7 +1061,9 @@ async function startServer() {
     }
   });
 
-  app.post('/api/system/clear-all-data', async (req, res) => {
+  // Wipes data for EVERY agency, not just the caller's, so it is restricted to
+  // the platform owner. It should become agency-scoped before customers rely on it.
+  app.post('/api/system/clear-all-data', requireRole('super_user'), async (req, res) => {
     try {
       const result = await db.clearAllData();
       res.json({ success: true, message: 'All database data cleared. Dashboard is ready for testing from scratch.', details: result });
@@ -1072,7 +1072,8 @@ async function startServer() {
     }
   });
 
-  app.post('/api/system/seed-demo-data', async (req, res) => {
+  // Seeds demo records into shared state; platform owner only.
+  app.post('/api/system/seed-demo-data', requireRole('super_user'), async (req, res) => {
     try {
       db.seedDemoClientsAndCampaigns();
       res.json({ success: true, message: 'Demo clients, brands, campaigns and line items re-seeded.' });
@@ -1083,14 +1084,12 @@ async function startServer() {
 
   // ==================== FIRESTORE STATUS / MANUAL SYNC ====================
   app.get('/api/system/firestore-status', (req, res) => {
-    const agencyId = req.query.agency_id as string | undefined;
-    res.json(db.getFirestoreStatus(agencyId));
+    res.json(db.getFirestoreStatus(getAgencyId(req)));
   });
 
   app.post('/api/system/firestore-sync', async (req, res) => {
     try {
-      const agencyId = req.body?.agency_id as string | undefined;
-      const counts = await db.resyncToFirestore(agencyId);
+      const counts = await db.resyncToFirestore(getAgencyId(req));
       res.json({ success: true, counts });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to sync to Firestore' });
