@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, Agency, UserRole, Client, Brand, CampaignCalculatedMetrics, CampaignLineItem } from '../types';
 import { ApiService } from '../lib/api';
+import { LoginPage } from '../components/auth/LoginPage';
+import { RefreshCw } from 'lucide-react';
 import { FirestoreService } from '../lib/firestoreService';
 
 interface DrillDownState {
@@ -32,21 +34,16 @@ interface AuthContextType {
   unmappedCount: number;
   refreshUnmappedCount: () => Promise<void>;
   switchRole: (role: UserRole) => void;
+  signOut: () => Promise<void>;
 }
-
-const defaultUser: User = {
-  id: 'user_sarah',
-  email: 'sarah@omnidigital.com',
-  name: 'Sarah Jenkins',
-  role: 'agency_admin',
-  agency_id: 'agency_omni',
-  created_at: new Date().toISOString()
-};
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<User>(defaultUser);
+  // Null until the session is resolved; the provider renders the sign-in screen
+  // rather than handing a null user to the rest of the app.
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [currentAgency, setCurrentAgency] = useState<Agency | null>(null);
   const [availableUsers, setAvailableUsers] = useState<User[]>([]);
@@ -88,10 +85,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   useEffect(() => {
+    // Only fetch once signed in, otherwise the sign-in screen fires requests
+    // that can only come back 401.
+    if (!currentUser) return;
     refreshAgencies();
     refreshUsers();
     refreshUnmappedCount();
-  }, [refreshAgencies, refreshUsers, refreshUnmappedCount]);
+  }, [currentUser, refreshAgencies, refreshUsers, refreshUnmappedCount]);
 
   useEffect(() => {
     const handleRefresh = () => {
@@ -111,7 +111,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [currentAgency?.id, refreshUnmappedCount]);
 
+  const loadSession = useCallback(async () => {
+    try {
+      const { user } = await ApiService.getCurrentUser();
+      setCurrentUser(user);
+      setCurrentPortal(user.role === 'super_user' ? 'super_user' : user.role === 'client_viewer' ? 'client_viewer' : 'agency');
+    } catch {
+      setCurrentUser(null);
+    } finally {
+      setIsAuthLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSession();
+    // Any request rejected as unauthenticated drops us back to the sign-in screen.
+    const onUnauthenticated = () => setCurrentUser(null);
+    window.addEventListener('omnitrack-unauthenticated', onUnauthenticated);
+    return () => window.removeEventListener('omnitrack-unauthenticated', onUnauthenticated);
+  }, [loadSession]);
+
+  const signOut = useCallback(async () => {
+    try {
+      await ApiService.logout();
+    } finally {
+      setCurrentUser(null);
+    }
+  }, []);
+
   const switchRole = (role: UserRole) => {
+    // Only an actual super user may view the product as another role. For
+    // everyone else this is a no-op: the server derives access from the session
+    // regardless, so switching would only misrepresent what they can see.
+    if (currentUser?.role !== 'super_user') return;
+
     if (role === 'super_user') {
       const superU = availableUsers.find(u => u.role === 'super_user') || {
         id: 'user_super',
@@ -189,6 +222,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setDrillDown({});
   };
 
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <RefreshCw className="w-5 h-5 text-slate-400 animate-spin" />
+      </div>
+    );
+  }
+
+  // Gate the whole app behind a session, so every consumer below can rely on
+  // currentUser being present.
+  if (!currentUser) {
+    return <LoginPage onSignedIn={() => { setIsAuthLoading(true); loadSession(); }} />;
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -211,7 +258,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setActiveAlertCount,
         unmappedCount,
         refreshUnmappedCount,
-        switchRole
+        switchRole,
+        signOut
       }}
     >
       {children}

@@ -7,6 +7,7 @@ import {
   Bell,
   CheckCircle2,
   ChevronDown,
+  LogOut,
   ShieldCheck,
   UserCheck,
   ExternalLink,
@@ -26,6 +27,7 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({ onOpenAlerts, onRefreshData, isRefreshing = false }) => {
   const {
     currentUser,
+    signOut,
     currentAgency,
     agencies,
     setCurrentAgency,
@@ -179,9 +181,18 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAlerts, onRefreshData, isR
             {roleMenuOpen && (
               <div className="absolute right-0 mt-1.5 w-64 rounded-xl bg-white border border-slate-200 shadow-xl py-1 z-50 animate-in fade-in zoom-in-95">
                 <div className="px-3 py-2 border-b border-slate-100">
-                  <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Simulate User Role</p>
-                  <p className="text-[11px] text-slate-500">Test multi-tenant RBAC permissions</p>
+                  <p className="text-xs font-bold text-slate-800">{currentUser.name}</p>
+                  <p className="text-[11px] text-slate-500">{currentUser.email}</p>
                 </div>
+
+                {currentUser.role === 'super_user' && (
+                <div className="px-3 py-2 border-b border-slate-100">
+                  <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">View as role</p>
+                  <p className="text-[11px] text-slate-500">Super user only</p>
+                </div>
+                )}
+
+                {currentUser.role === 'super_user' && (<>
 
                 <button
                   onClick={() => {
@@ -239,6 +250,20 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAlerts, onRefreshData, isR
                     <p className="font-semibold">Super User Portal</p>
                     <p className="text-[11px] text-purple-600/70">Create agencies, subscription tiers & audit logs</p>
                   </div>
+                </button>
+                </>)}
+
+                <div className="border-t border-slate-100 my-1"></div>
+
+                <button
+                  onClick={() => {
+                    setRoleMenuOpen(false);
+                    signOut();
+                  }}
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2.5 transition-colors text-slate-700"
+                >
+                  <LogOut className="w-4 h-4 text-slate-500" />
+                  <span className="font-semibold">Sign out</span>
                 </button>
               </div>
             )}

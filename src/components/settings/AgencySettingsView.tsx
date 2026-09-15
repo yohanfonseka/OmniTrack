@@ -12,7 +12,8 @@ import {
   Lock,
   Mail,
   Building2,
-  Coins
+  Coins,
+  Trash2
 } from 'lucide-react';
 import { FormattedNumberInput } from '../common/FormattedNumberInput';
 
@@ -28,6 +29,57 @@ export const AgencySettingsView: React.FC = () => {
   const [rates, setRates] = useState<Record<string, number>>({});
   const [savingCurrency, setSavingCurrency] = useState(false);
   const [currencyError, setCurrencyError] = useState<string | null>(null);
+
+  const [inviteName, setInviteName] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [invitePassword, setInvitePassword] = useState('');
+  const [inviteRole, setInviteRole] = useState('agency_member');
+  const [isInviting, setIsInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+
+  const canManageUsers = currentUser.role === 'super_user' || currentUser.role === 'agency_admin';
+
+  const reloadUsers = () => {
+    if (!currentAgency) return;
+    ApiService.getUsers(currentAgency.id).then(setUsers).catch(console.error);
+  };
+
+  const handleInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentAgency) return;
+    setInviteError(null);
+    setIsInviting(true);
+    try {
+      await ApiService.inviteUser(currentAgency.id, {
+        name: inviteName.trim(),
+        email: inviteEmail.trim(),
+        password: invitePassword,
+        role: inviteRole
+      });
+      setInviteName('');
+      setInviteEmail('');
+      setInvitePassword('');
+      setInviteRole('agency_member');
+      reloadUsers();
+      setSavedNote(`${inviteEmail.trim()} can now sign in to ${currentAgency.name}.`);
+      setTimeout(() => setSavedNote(null), 4000);
+    } catch (err: any) {
+      setInviteError(err.message || 'Could not add the team member.');
+    } finally {
+      setIsInviting(false);
+    }
+  };
+
+  const handleRemoveUser = async (user: User) => {
+    if (!currentAgency) return;
+    if (!window.confirm(`Remove ${user.name}? They will lose access to ${currentAgency.name}.`)) return;
+    try {
+      await ApiService.deleteUser(currentAgency.id, user.id);
+      reloadUsers();
+    } catch (err: any) {
+      setInviteError(err.message || 'Could not remove the user.');
+    }
+  };
 
   useEffect(() => {
     if (!currentAgency) return;
@@ -146,12 +198,92 @@ export const AgencySettingsView: React.FC = () => {
                 </div>
               </div>
 
-              <span className="text-xs font-mono font-medium px-2.5 py-1 rounded bg-slate-100 text-slate-700 uppercase">
-                {u.role.replace(/_/g, ' ')}
-              </span>
+              <div className="flex items-center gap-2">
+                {!u.auth_uid && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                    No sign-in yet
+                  </span>
+                )}
+                <span className="text-xs font-mono font-medium px-2.5 py-1 rounded bg-slate-100 text-slate-700 uppercase">
+                  {u.role.replace(/_/g, ' ')}
+                </span>
+                {canManageUsers && u.id !== currentUser.id && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveUser(u)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                    title={`Remove ${u.name}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>
+
+        {canManageUsers && (
+          <form onSubmit={handleInvite} className="mt-4 pt-4 border-t border-slate-100 space-y-3">
+            <div>
+              <p className="text-xs font-bold text-slate-800">Add a team member</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Creates their sign-in and grants access to this agency. Share the starting password with them directly; they can change it later.
+              </p>
+            </div>
+
+            {inviteError && (
+              <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-[11px] text-rose-800">
+                {inviteError}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+              <input
+                type="text"
+                required
+                placeholder="Full name"
+                value={inviteName}
+                onChange={e => setInviteName(e.target.value)}
+                className="px-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-indigo-500"
+              />
+              <input
+                type="email"
+                required
+                placeholder="Work email"
+                value={inviteEmail}
+                onChange={e => setInviteEmail(e.target.value)}
+                className="px-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-indigo-500"
+              />
+              <input
+                type="text"
+                required
+                minLength={8}
+                placeholder="Starting password (min 8 characters)"
+                value={invitePassword}
+                onChange={e => setInvitePassword(e.target.value)}
+                className="px-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-indigo-500 font-mono"
+              />
+              <select
+                value={inviteRole}
+                onChange={e => setInviteRole(e.target.value)}
+                className="px-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-indigo-500 bg-white"
+              >
+                <option value="agency_member">Agency member</option>
+                <option value="agency_admin">Agency admin</option>
+                <option value="client_viewer">Client viewer</option>
+                {currentUser.role === 'super_user' && <option value="super_user">Super user</option>}
+              </select>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isInviting}
+              className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-800 shadow-2xs disabled:opacity-50"
+            >
+              {isInviting ? 'Adding...' : 'Add team member'}
+            </button>
+          </form>
+        )}
       </div>
 
       {/* Reporting Currency & Exchange Rates */}

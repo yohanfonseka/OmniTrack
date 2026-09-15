@@ -2,8 +2,20 @@ import express from 'express';
 import path from 'path';
 import { db } from './server/db.js';
 import { HealthEngine } from './server/healthEngine.js';
+import cookieParser from 'cookie-parser';
 import { CsvEngine } from './server/csvEngine.js';
 import { XlsxEngine } from './server/xlsxEngine.js';
+import {
+  AuthedRequest,
+  SESSION_COOKIE,
+  createAccount,
+  hasBootstrappedAdmin,
+  loginWithPassword,
+  requireAuth,
+  requireRole,
+  resolveAgencyId,
+  sessionCookieOptions
+} from './server/auth.js';
 
 async function startServer() {
   const app = express();
@@ -16,16 +28,71 @@ async function startServer() {
 
   app.use(express.json({ limit: '15mb' }));
   app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+  app.use(cookieParser());
 
-  // Helper middleware to extract agency_id header or query param
-  const getAgencyId = (req: express.Request): string => {
-    return (req.headers['x-agency-id'] as string) || (req.query.agency_id as string) || 'agency_omni';
-  };
+  // The agency a request may act on, derived from the signed-in user rather
+  // than from a client-supplied header.
+  const getAgencyId = (req: express.Request): string => resolveAgencyId(req as AuthedRequest);
 
   // ==================== HEALTH & METADATA ====================
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', server_time: new Date().toISOString() });
   });
+
+  // ==================== AUTHENTICATION ====================
+  app.post('/api/auth/login', async (req, res) => {
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
+    try {
+      const { cookie, user } = await loginWithPassword(String(email), String(password));
+      res.cookie(SESSION_COOKIE, cookie, sessionCookieOptions());
+      res.json({ user });
+    } catch (err: any) {
+      res.status(401).json({ error: err.message || 'Could not sign in.' });
+    }
+  });
+
+  app.post('/api/auth/logout', (req, res) => {
+    res.clearCookie(SESSION_COOKIE, { ...sessionCookieOptions(), maxAge: undefined });
+    res.json({ success: true });
+  });
+
+  app.get('/api/auth/me', requireAuth, (req: AuthedRequest, res) => {
+    res.json({ user: req.appUser });
+  });
+
+  /**
+   * Creates the first administrator. Guarded by a secret only the deployer
+   * holds, and refuses once any account exists, so it cannot be used to add
+   * accounts to a running system.
+   */
+  app.post('/api/auth/bootstrap', async (req, res) => {
+    const secret = process.env.ADMIN_BOOTSTRAP_TOKEN;
+    if (!secret) return res.status(404).json({ error: 'Not found' });
+    if ((req.headers['x-bootstrap-token'] as string) !== secret) {
+      return res.status(403).json({ error: 'Invalid bootstrap token.' });
+    }
+    if (hasBootstrappedAdmin()) {
+      return res.status(409).json({ error: 'An administrator already exists. Invite further users from Settings.' });
+    }
+
+    const { email, password, name, agency_id } = req.body || {};
+    try {
+      const user = await createAccount({
+        email: String(email || ''),
+        password: String(password || ''),
+        name: String(name || 'Administrator'),
+        role: 'super_user',
+        agency_id: agency_id ? String(agency_id) : db.getAgencies()[0]?.id
+      });
+      res.status(201).json({ user });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Could not create the administrator.' });
+    }
+  });
+
+  // Everything past this point requires a verified session.
+  app.use('/api', requireAuth);
 
   // ==================== AGENCIES (Super User Portal) ====================
   app.get('/api/agencies', (req, res) => {
@@ -67,13 +134,44 @@ async function startServer() {
 
   // ==================== USERS & AUTH CONTEXT ====================
   app.get('/api/users', (req, res) => {
-    const agencyId = req.query.agency_id as string;
-    res.json(db.getUsers(agencyId));
+    // Scoped to the caller's own agency so one tenant cannot enumerate another's staff.
+    res.json(db.getUsers(getAgencyId(req)));
   });
 
-  app.post('/api/users', (req, res) => {
-    const user = db.createUser(req.body);
-    res.status(201).json(user);
+  // Invite-only: an admin creates the account, so nobody can self-serve into a tenant.
+  app.post('/api/users/invite', requireRole('super_user', 'agency_admin'), async (req: AuthedRequest, res) => {
+    const { email, password, name, role, client_id, brand_id } = req.body || {};
+    const requestedRole = (role || 'agency_member') as any;
+
+    if (requestedRole === 'super_user' && req.appUser?.role !== 'super_user') {
+      return res.status(403).json({ error: 'Only a super user can create another super user.' });
+    }
+
+    try {
+      const user = await createAccount({
+        email: String(email || ''),
+        password: String(password || ''),
+        name: String(name || '').trim() || String(email || ''),
+        role: requestedRole,
+        agency_id: getAgencyId(req),
+        client_id: client_id ? String(client_id) : undefined,
+        brand_id: brand_id ? String(brand_id) : undefined
+      });
+      res.status(201).json(user);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Could not create the user.' });
+    }
+  });
+
+  app.delete('/api/users/:id', requireRole('super_user', 'agency_admin'), (req: AuthedRequest, res) => {
+    if (req.params.id === req.appUser?.id) {
+      return res.status(400).json({ error: 'You cannot remove your own account.' });
+    }
+    const target = db.getUserById(req.params.id);
+    if (!target || (target.agency_id && target.agency_id !== getAgencyId(req) && req.appUser?.role !== 'super_user')) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ success: db.deleteUser(req.params.id) });
   });
 
   // ==================== CLIENTS ====================

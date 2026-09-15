@@ -47,6 +47,8 @@ export interface User {
   agency_id?: string;
   client_id?: string; // For client viewers
   brand_id?: string;
+  /** Firebase Auth uid once this user has signed in or been invited. */
+  auth_uid?: string;
   created_at: string;
 }
 

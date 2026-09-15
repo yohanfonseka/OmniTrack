@@ -28,8 +28,16 @@ export class ApiService {
     try {
       const res = await fetch(path, {
         ...options,
-        headers
+        headers,
+        credentials: 'same-origin'
       });
+
+      if (res.status === 401) {
+        // The session is gone; let the app fall back to the sign-in screen
+        // rather than retrying or surfacing a raw error on every panel.
+        window.dispatchEvent(new CustomEvent('omnitrack-unauthenticated'));
+        throw new Error('Not signed in');
+      }
 
       if (!res.ok) {
         let errMsg = `Request failed: ${res.status} ${res.statusText}`;
@@ -345,6 +353,39 @@ export class ApiService {
 
   static getSampleCsv(platform: string): Promise<{ csv: string }> {
     return this.request<{ csv: string }>(`/api/imports/sample/${platform}`);
+  }
+
+  // Auth
+  static login(email: string, password: string): Promise<{ user: User }> {
+    return this.request<{ user: User }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password })
+    });
+  }
+
+  static logout(): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>('/api/auth/logout', { method: 'POST' });
+  }
+
+  static getCurrentUser(): Promise<{ user: User }> {
+    return this.request<{ user: User }>('/api/auth/me');
+  }
+
+  static inviteUser(agencyId: string, data: {
+    email: string;
+    password: string;
+    name: string;
+    role: string;
+    client_id?: string;
+  }): Promise<User> {
+    return this.request<User>('/api/users/invite', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    }, agencyId);
+  }
+
+  static deleteUser(agencyId: string, userId: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/api/users/${userId}`, { method: 'DELETE' }, agencyId);
   }
 
   static convertXlsxToCsv(fileBase64: string): Promise<{ csv: string }> {

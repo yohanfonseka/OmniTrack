@@ -67,7 +67,8 @@ class RelationalDatabase {
         fsMetrics,
         fsAlerts,
         fsUnmapped,
-        fsDataSources
+        fsDataSources,
+        fsUsers
       ] = await Promise.all([
         fetchCollection<{ id: string; is_cleared?: boolean }>('system_metadata'),
         fetchCollection<Agency>('agencies'),
@@ -78,7 +79,8 @@ class RelationalDatabase {
         fetchCollection<LineItemDailyMetric>('daily_metrics'),
         fetchCollection<Alert>('alerts'),
         fetchCollection<UnmappedCampaign>('unmapped_campaigns'),
-        fetchCollection<LineItemDataSource>('line_item_data_sources')
+        fetchCollection<LineItemDataSource>('line_item_data_sources'),
+        fetchCollection<User>('users')
       ]);
 
       const appState = fsMeta.find(m => m.id === 'app_state');
@@ -88,6 +90,14 @@ class RelationalDatabase {
       }
 
       console.log(`[Firestore Hydration] Fetched: ${fsAgencies.length} agencies, ${fsClients.length} clients, ${fsBrands.length} brands, ${fsCampaigns.length} campaigns, ${fsLineItems.length} line items, ${fsDataSources.length} data sources, ${fsUnmapped.length} unmapped`);
+
+      // Accounts are merged regardless of the cleared-data flag: wiping campaign
+      // data must never remove the users who can sign in.
+      fsUsers.forEach(fu => {
+        const idx = this.users.findIndex(u => u.id === fu.id);
+        if (idx !== -1) this.users[idx] = fu;
+        else this.users.push(fu);
+      });
 
       // 1. Merge Agencies
       if (fsAgencies.length > 0) {
@@ -329,6 +339,11 @@ class RelationalDatabase {
     return this.users.find(u => u.id === id);
   }
 
+  getUserByEmail(email: string): User | undefined {
+    const normalized = (email || '').trim().toLowerCase();
+    return this.users.find(u => (u.email || '').trim().toLowerCase() === normalized);
+  }
+
   createUser(user: Omit<User, 'id' | 'created_at'>): User {
     const newUser: User = {
       ...user,
@@ -336,7 +351,21 @@ class RelationalDatabase {
       created_at: new Date().toISOString()
     };
     this.users.push(newUser);
+    this.persistUser(newUser);
     return newUser;
+  }
+
+  /** Accounts must outlive the process, or a restart locks everyone out. */
+  persistUser(user: User): void {
+    saveDoc('users', user.id, user).catch(err => console.error('[Firestore] persistUser error:', err));
+  }
+
+  deleteUser(id: string): boolean {
+    const idx = this.users.findIndex(u => u.id === id);
+    if (idx === -1) return false;
+    this.users.splice(idx, 1);
+    deleteDocById('users', id).catch(err => console.error('[Firestore] deleteUser error:', err));
+    return true;
   }
 
   // ==================== CLIENTS ====================
