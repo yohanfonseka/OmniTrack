@@ -90,12 +90,14 @@ export const CampaignsListView: React.FC<CampaignsListViewProps> = ({
 
   // Aggregated Portfolio Stats
   const portfolioSummary = useMemo(() => {
-    const totalBudget = campaigns.reduce((acc, c) => acc + (c.total_budget || 0), 0);
-    const totalSpend = campaigns.reduce((acc, c) => acc + (c.total_spend || 0), 0);
+    // Campaigns can each be in a different currency, so the portfolio totals sum
+    // the base-currency figures rather than the raw ones.
+    const totalBudget = campaigns.reduce((acc, c) => acc + (c.total_budget_base ?? c.total_budget ?? 0), 0);
+    const totalSpend = campaigns.reduce((acc, c) => acc + (c.total_spend_base ?? c.total_spend ?? 0), 0);
     const greenCount = campaigns.filter(c => c.overall_health === 'green').length;
     const amberCount = campaigns.filter(c => c.overall_health === 'amber').length;
     const redCount = campaigns.filter(c => c.overall_health === 'red').length;
-    const currency = campaigns[0]?.campaign.currency || 'USD';
+    const currency = campaigns[0]?.base_currency || campaigns[0]?.campaign.currency || 'USD';
 
     return {
       totalCampaigns: campaigns.length,

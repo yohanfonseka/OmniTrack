@@ -107,14 +107,17 @@ export const DrillDownContainer: React.FC<DrillDownContainerProps> = ({
   const allCampaignsMetrics: CampaignCalculatedMetrics | null = useMemo(() => {
     if (availableCampaigns.length === 0) return null;
 
-    const totalBudget = availableCampaigns.reduce((sum, c) => sum + (c.total_budget || 0), 0);
-    const totalSpend = availableCampaigns.reduce((sum, c) => sum + (c.total_spend || 0), 0);
-    const expectedSpend = availableCampaigns.reduce((sum, c) => sum + (c.expected_spend || 0), 0);
+    // Each campaign carries its own currency, so blended money totals are summed
+    // from the base-currency figures the server provides.
+    const baseCurrency = availableCampaigns[0]?.base_currency;
+    const totalBudget = availableCampaigns.reduce((sum, c) => sum + (c.total_budget_base ?? c.total_budget ?? 0), 0);
+    const totalSpend = availableCampaigns.reduce((sum, c) => sum + (c.total_spend_base ?? c.total_spend ?? 0), 0);
+    const expectedSpend = availableCampaigns.reduce((sum, c) => sum + (c.expected_spend_base ?? c.expected_spend ?? 0), 0);
     const totalImpr = availableCampaigns.reduce((sum, c) => sum + (c.total_impressions || 0), 0);
     const totalReach = availableCampaigns.reduce((sum, c) => sum + (c.total_reach || 0), 0);
     const totalClicks = availableCampaigns.reduce((sum, c) => sum + (c.total_clicks || 0), 0);
     const totalConv = availableCampaigns.reduce((sum, c) => sum + (c.total_conversions || 0), 0);
-    const totalConvVal = availableCampaigns.reduce((sum, c) => sum + (c.total_conversion_value || 0), 0);
+    const totalConvVal = availableCampaigns.reduce((sum, c) => sum + (c.total_conversion_value_base ?? c.total_conversion_value ?? 0), 0);
     const totalVideo = availableCampaigns.reduce((sum, c) => sum + (c.total_video_views || 0), 0);
 
     // Aggregate platforms across all matching campaigns
@@ -196,7 +199,7 @@ export const DrillDownContainer: React.FC<DrillDownContainerProps> = ({
         start_date: firstCamp?.start_date || '2026-09-01',
         end_date: firstCamp?.end_date || '2026-09-30',
         total_budget: totalBudget,
-        currency: firstCamp?.currency || 'LKR',
+        currency: baseCurrency || firstCamp?.currency || 'LKR',
         status: 'active',
         created_at: '',
         updated_at: ''

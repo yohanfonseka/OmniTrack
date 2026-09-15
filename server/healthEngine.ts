@@ -536,6 +536,9 @@ export class HealthEngine {
     // Surfaced for display: what 1 USD is worth in this campaign's currency.
     const rate = toCampaignCurrency(1, 'USD');
 
+    const { base_currency } = HealthEngine.getAgencyCurrencySettings(agencyId);
+    const toBase = HealthEngine.getCurrencyConverter(agencyId, base_currency);
+
     // Calculate currency breakdown
     const currencyMap: Record<string, { budget: number; spend: number; expected_spend: number }> = {};
     lineItemCalculated.forEach(l => {
@@ -591,7 +594,11 @@ export class HealthEngine {
     const total_reach = lineItemCalculated.reduce((sum, l) => sum + l.total_reach, 0);
     const total_clicks = lineItemCalculated.reduce((sum, l) => sum + l.total_clicks, 0);
     const total_conversions = lineItemCalculated.reduce((sum, l) => sum + l.total_conversions, 0);
-    const total_conversion_value = lineItemCalculated.reduce((sum, l) => sum + l.total_conversion_value, 0);
+    // Converted like spend: it is money, and blended_roas divides the two.
+    const total_conversion_value = lineItemCalculated.reduce(
+      (sum, l) => sum + toCampaignCurrency(l.total_conversion_value, l.line_item.currency),
+      0
+    );
     const total_video_views = lineItemCalculated.reduce((sum, l) => sum + l.total_video_views, 0);
     const total_engagements = lineItemCalculated.reduce((sum, l) => sum + l.total_engagements, 0);
 
@@ -773,6 +780,7 @@ export class HealthEngine {
       blended_ctr,
       blended_cpm,
       total_conversions,
+      total_conversion_value,
       blended_cpa,
       blended_cpc,
       blended_roas,
@@ -784,6 +792,14 @@ export class HealthEngine {
       platforms,
       has_multiple_currencies,
       exchange_rate: rate,
+      // Campaigns are each denominated in their own currency, so anything
+      // summing across campaigns has to use these rather than the raw totals.
+      base_currency,
+      total_budget_base: toBase(total_budget, campaignCurrency),
+      total_spend_base: toBase(total_spend, campaignCurrency),
+      expected_spend_base: toBase(expected_spend, campaignCurrency),
+      total_conversion_value_base: toBase(total_conversion_value, campaignCurrency),
+      projected_final_spend_base: toBase(projected_final_spend, campaignCurrency),
       line_items_count: lineItemCalculated.length,
       connected_line_items_count,
       unconnected_line_items_count,

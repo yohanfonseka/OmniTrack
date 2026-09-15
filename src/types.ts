@@ -411,6 +411,7 @@ export interface CampaignCalculatedMetrics {
   blended_ctr: number;
   blended_cpm: number;
   total_conversions: number;
+  total_conversion_value: number;
   blended_cpa: number;
   blended_cpc: number;
   blended_roas: number;
@@ -422,6 +423,16 @@ export interface CampaignCalculatedMetrics {
   platforms: PlatformCalculatedMetrics[];
   has_multiple_currencies?: boolean;
   exchange_rate?: number;
+  /**
+   * Money totals restated in the agency's base currency. Campaigns can each be
+   * denominated differently, so only these may be summed across campaigns.
+   */
+  base_currency?: string;
+  total_budget_base?: number;
+  total_spend_base?: number;
+  expected_spend_base?: number;
+  total_conversion_value_base?: number;
+  projected_final_spend_base?: number;
   line_items_count?: number;
   connected_line_items_count?: number;
   unconnected_line_items_count?: number;
