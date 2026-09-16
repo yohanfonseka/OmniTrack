@@ -260,6 +260,8 @@ export interface ImportJob {
   inserted_count: number;
   updated_count: number;
   skipped_count: number;
+  /** Rows that reported no delivery at all and were omitted on import. */
+  empty_rows_count?: number;
   errors: string[];
   started_at: string;
   completed_at?: string;

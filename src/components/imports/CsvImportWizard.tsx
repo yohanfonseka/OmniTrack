@@ -298,6 +298,22 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
         return isNaN(num) ? 0 : num;
       };
 
+      // Mirrors CsvEngine.isEmptyMetricRow on the server, which is what
+      // actually decides what gets stored. Applied here too so the matching
+      // step lists only ad sets that will really be imported.
+      const deliveryCols = [
+        mappings['spend'],
+        mappings['impressions'],
+        mappings['reach'],
+        mappings['clicks'],
+        mappings['conversions'],
+        mappings['conversion_value'],
+        mappings['video_views']
+      ].filter(Boolean);
+
+      const isEmptyRow = (row: Record<string, any>) =>
+        deliveryCols.length > 0 && deliveryCols.every(col => parseRowVal(row[col]) === 0);
+
       // Hierarchical grouping by Campaign (Col A) -> Ad Set / Line Item (Col B)
       const campaignGroupsMap = new Map<string, {
         csv_campaign_name: string;
@@ -313,7 +329,14 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
         }>;
       }>();
 
+      let emptyRowCount = 0;
+
       rows.forEach((row, idx) => {
+        if (isEmptyRow(row)) {
+          emptyRowCount += 1;
+          return;
+        }
+
         const rawCamp = campCol ? String(row[campCol] || '').trim() : '';
         const rawAdSet = lineCol ? String(row[lineCol] || '').trim() : '';
         const rawId = idCol ? String(row[idCol] || '').trim() : '';
@@ -379,12 +402,17 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
       });
 
       if (distinctFlat.length === 0) {
-        setErrorMsg('No campaigns or line items found in CSV with current column selection.');
+        setErrorMsg(
+          emptyRowCount === rows.length && rows.length > 0
+            ? `All ${rows.length} rows report zero spend, impressions and clicks, so there is nothing to import.`
+            : 'No campaigns or line items found in CSV with current column selection.'
+        );
         return;
       }
 
       setPreviewData((prev: any) => ({
         ...prev,
+        empty_rows: emptyRowCount,
         distinct_campaign_groups: distinctGroups,
         distinct_campaigns: distinctFlat
       }));
@@ -1077,6 +1105,15 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
               ))}
             </div>
 
+            {previewData.empty_rows > 0 && (
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600">
+                <strong className="text-slate-800">{previewData.empty_rows}</strong> of{' '}
+                <strong className="text-slate-800">{previewData.total_rows}</strong> rows report no spend,
+                impressions, clicks or conversions - days the ad set did not run. They will be skipped so
+                they do not create empty line items or stretch campaign date ranges.
+              </div>
+            )}
+
             {/* Data Preview Table (First 5 Rows) */}
             <div className="space-y-2">
               <span className="text-xs font-bold text-slate-700 uppercase">First 5 Sample Rows</span>
@@ -1207,6 +1244,12 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                   <span className="text-lg font-bold text-emerald-600 capitalize">{importJob.status}</span>
                 </div>
               </div>
+
+              {(importJob.empty_rows_count || 0) > 0 && (
+                <p className="text-[11px] text-slate-500">
+                  {importJob.empty_rows_count} empty rows omitted (no spend, impressions, clicks or conversions).
+                </p>
+              )}
 
               {/* Direct to Unmapped Navigation Callout */}
               <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3">

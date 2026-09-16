@@ -26,6 +26,8 @@ export interface DistinctCampaignGroup {
 export interface CsvPreviewResult {
   headers: string[];
   total_rows: number;
+  /** Rows in the file that record no delivery at all and will not be imported. */
+  empty_rows: number;
   preview_rows: Record<string, any>[];
   detected_platform?: PlatformType;
   /** Currency read from the file itself; null when the file does not state one (or states several). */
@@ -136,6 +138,50 @@ export class CsvEngine {
   /**
    * Previews CSV, identifies headers, auto-detects platform patterns, and extracts distinct line items
    */
+  /**
+   * Columns that record actual delivery. Anything outside this list (names,
+   * ids, status, objective) describes the row rather than measuring it.
+   */
+  private static readonly DELIVERY_FIELDS = [
+    'spend',
+    'impressions',
+    'reach',
+    'clicks',
+    'conversions',
+    'conversion_value',
+    'video_views'
+  ];
+
+  /**
+   * True when a row reports nothing at all - every delivery column is zero or
+   * blank. Platforms emit these in bulk for days an ad set was paused, out of
+   * budget, or not yet live. Importing them adds no information but does add
+   * cost: empty line items get created, campaign date ranges stretch back to
+   * days nothing ran, and day counts used for pacing are inflated.
+   *
+   * A negative value (a refund or an adjustment) is real data, so it keeps the
+   * row. So does a file with no delivery column mapped at all - there is then
+   * nothing to judge emptiness by, and dropping every row would be worse than
+   * keeping them.
+   */
+  static isEmptyMetricRow(row: Record<string, any>, map: Record<string, string>): boolean {
+    let sawDeliveryColumn = false;
+
+    for (const field of CsvEngine.DELIVERY_FIELDS) {
+      const header = map[field];
+      if (!header) continue;
+      sawDeliveryColumn = true;
+
+      const raw = row[header];
+      if (raw === undefined || raw === null || String(raw).trim() === '') continue;
+
+      const num = parseFloat(String(raw).replace(/[^0-9.-]/g, ''));
+      if (!isNaN(num) && num !== 0) return false;
+    }
+
+    return sawDeliveryColumn;
+  }
+
   static parseAndPreview(csvContent: string): CsvPreviewResult {
     const parsed = Papa.parse(csvContent.trim(), {
       header: true,
@@ -258,7 +304,16 @@ export class CsvEngine {
       ad_sets: Map<string, DistinctAdSet>;
     }>();
 
+    // Counted, but not aggregated: the review stage should show what will
+    // actually be imported, not what the platform happened to export.
+    let empty_rows = 0;
+
     rows.forEach((row, idx) => {
+      if (CsvEngine.isEmptyMetricRow(row, suggested_mapping)) {
+        empty_rows += 1;
+        return;
+      }
+
       const rawCamp = campHeader ? String(row[campHeader] || '').trim() : '';
       const rawAdSet = adSetHeader ? String(row[adSetHeader] || '').trim() : '';
       const rawId = idHeader ? String(row[idHeader] || '').trim() : '';
@@ -384,6 +439,7 @@ export class CsvEngine {
     return {
       headers,
       total_rows: rows.length,
+      empty_rows,
       preview_rows,
       detected_platform,
       detected_currency,
@@ -418,6 +474,7 @@ export class CsvEngine {
       inserted_count: 0,
       updated_count: 0,
       skipped_count: 0,
+      empty_rows_count: 0,
       errors: []
     });
 
@@ -439,6 +496,7 @@ export class CsvEngine {
         let inserted = 0;
         let updated = 0;
         let skipped = 0;
+        let emptyRows = 0;
         let unallocatedCount = 0;
         const errors: string[] = [];
         // Parses numeric fields safely, tolerating thousands separators and
@@ -506,6 +564,14 @@ export class CsvEngine {
 
         rows.forEach((row, idx) => {
           try {
+            // Rows that record no delivery are dropped before anything is
+            // created from them, so a paused ad set does not become an empty
+            // line item or an unmapped campaign waiting to be matched.
+            if (CsvEngine.isEmptyMetricRow(row, map)) {
+              emptyRows += 1;
+              return;
+            }
+
             const rawCamp = String(row[map['campaign_name']] || '').trim();
             const rawAdSet = String(row[map['line_item_name']] || '').trim();
             const rawCampId = String(row[map['platform_campaign_id']] || '').trim();
@@ -922,6 +988,7 @@ export class CsvEngine {
           inserted_count: inserted,
           updated_count: updated,
           skipped_count: skipped + unallocatedCount,
+          empty_rows_count: emptyRows,
           errors: errors.slice(0, 10),
           completed_at: new Date().toISOString()
         });
@@ -936,7 +1003,7 @@ export class CsvEngine {
           action: 'COMPLETED_CSV_IMPORT',
           entity_type: 'import',
           entity_id: job.id,
-          details: `Processed ${rows.length} rows (${inserted} identified rows inserted, ${updated} deduplicated, ${unallocatedCount} unallocated rows routed to unmapped campaigns)`
+          details: `Processed ${rows.length} rows (${inserted} identified rows inserted, ${updated} deduplicated, ${unallocatedCount} unallocated rows routed to unmapped campaigns, ${emptyRows} empty rows omitted)`
         });
       } catch (err: any) {
         db.updateImportJob(job.id, {
