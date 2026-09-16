@@ -43,7 +43,6 @@ class RelationalDatabase {
   unmappedCampaigns: UnmappedCampaign[] = [];
   lineItemDataSources: LineItemDataSource[] = [];
   private firestoreInitialized = false;
-  private isClearedState = false;
 
   constructor() {
     this.seedCoreTenants();
@@ -83,10 +82,14 @@ class RelationalDatabase {
         fetchCollection<User>('users')
       ]);
 
+      // `is_cleared` used to blank everything hydrated here. It could not tell
+      // "cleared" from "cleared, then re-imported", so any data created after a
+      // wipe was silently dropped on the next restart - and only the demo
+      // re-seed ever reset it. A wipe already deletes the documents, so an empty
+      // Firestore hydrates empty on its own and the flag bought nothing.
       const appState = fsMeta.find(m => m.id === 'app_state');
       if (appState?.is_cleared) {
-        this.isClearedState = true;
-        console.log('[Firestore Database] Database has been marked as cleared by user. Starting with clean slate.');
+        console.log('[Firestore Database] Ignoring stale is_cleared flag; hydrating whatever documents exist.');
       }
 
       console.log(`[Firestore Hydration] Fetched: ${fsAgencies.length} agencies, ${fsClients.length} clients, ${fsBrands.length} brands, ${fsCampaigns.length} campaigns, ${fsLineItems.length} line items, ${fsDataSources.length} data sources, ${fsUnmapped.length} unmapped`);
@@ -108,31 +111,19 @@ class RelationalDatabase {
         });
       }
 
-      if (this.isClearedState) {
-        // When cleared by user, keep datasets strictly empty
-        this.clients = [];
-        this.brands = [];
-        this.campaigns = [];
-        this.lineItems = [];
-        this.dailyMetrics = [];
-        this.alerts = [];
-        this.unmappedCampaigns = [];
-        this.lineItemDataSources = [];
-      } else {
-        // Reflect Firestore documents directly
-        this.clients = [...fsClients];
-        this.brands = [...fsBrands];
-        this.campaigns = [...fsCampaigns];
-        this.lineItems = [...fsLineItems];
-        this.dailyMetrics = [...fsMetrics];
-        this.alerts = [...fsAlerts];
-        // Retain all unmapped campaigns including mapped ones so they can be viewed and unlinked
-        this.unmappedCampaigns = [...fsUnmapped];
-        this.lineItemDataSources = [...fsDataSources];
+      // Reflect Firestore documents directly - it is the record of what exists.
+      this.clients = [...fsClients];
+      this.brands = [...fsBrands];
+      this.campaigns = [...fsCampaigns];
+      this.lineItems = [...fsLineItems];
+      this.dailyMetrics = [...fsMetrics];
+      this.alerts = [...fsAlerts];
+      // Retain all unmapped campaigns including mapped ones so they can be viewed and unlinked
+      this.unmappedCampaigns = [...fsUnmapped];
+      this.lineItemDataSources = [...fsDataSources];
 
-        // Run legacy line item migration if any legacy fields exist without line_item_data_sources
-        this.migrateLegacyLineItemDataSources();
-      }
+      // Run legacy line item migration if any legacy fields exist without line_item_data_sources
+      this.migrateLegacyLineItemDataSources();
 
       this.firestoreInitialized = true;
       console.log('[Firestore Database] Hydration complete! Active clients:', this.clients.map(c => c.name));
@@ -157,9 +148,7 @@ class RelationalDatabase {
     this.columnMappings = [];
     this.dashboardShares = [];
     this.auditLogs = [];
-    this.isClearedState = true;
-
-    // Persist clear state flag to Firestore
+    // Recorded for audit only; hydration no longer reads it.
     await saveDoc('system_metadata', 'app_state', {
       is_cleared: true,
       cleared_at: new Date().toISOString()
@@ -1986,7 +1975,6 @@ class RelationalDatabase {
   }
 
   seedDemoClientsAndCampaigns() {
-    this.isClearedState = false;
     saveDoc('system_metadata', 'app_state', { is_cleared: false, updated_at: new Date().toISOString() }).catch(() => {});
 
     // 4. Clients
