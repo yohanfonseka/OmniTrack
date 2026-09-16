@@ -51,6 +51,12 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
   const [rollbackFeedback, setRollbackFeedback] = useState<string | null>(null);
 
   const { line_item } = metrics;
+  const isConnected = metrics.data_source_status === 'connected';
+
+  // Plumbing, not performance: collapsed once a platform campaign is feeding
+  // this line item, and open while one still needs connecting - the only time
+  // it is something to act on.
+  const [showDataSources, setShowDataSources] = useState(!isConnected);
   const currency = line_item.currency || 'LKR';
 
   // Format currency
@@ -135,30 +141,24 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
               Health Rating: {metrics.health_score ?? 85}/100
             </span>
           </div>
+          {/* Platform identifiers live in the data source section at the
+              bottom - this line stays about the campaign itself. */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-slate-500">
             <span>Objective: <strong className="text-slate-700">{line_item.objective}</strong></span>
             <span>•</span>
-            <span className="flex items-center gap-1.5">
-              <span>Account:</span>
-              {line_item.platform_account_id && line_item.platform_account_id !== 'act_default' ? (
-                <code className="font-mono text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">{line_item.platform_account_id}</code>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                  Unlinked (populates on import)
-                </span>
-              )}
+            <span>
+              Flight: <strong className="text-slate-700">{line_item.start_date}</strong> to{' '}
+              <strong className="text-slate-700">{line_item.end_date}</strong>
             </span>
-            <span>•</span>
-            <span className="flex items-center gap-1.5">
-              <span>Platform Campaign ID:</span>
-              {line_item.platform_campaign_id && !line_item.platform_campaign_id.startsWith('cid_') ? (
-                <code className="font-mono text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">{line_item.platform_campaign_id}</code>
-              ) : (
+            {!isConnected && (
+              <>
+                <span>•</span>
                 <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                  Pending Mapping
+                  <AlertTriangle className="w-3 h-3" />
+                  No platform data source
                 </span>
-              )}
-            </span>
+              </>
+            )}
           </div>
         </div>
 
@@ -220,132 +220,6 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
           </div>
         </div>
       )}
-
-      {/* Live Data Sources Mapping Section (Level 3 -> Level 4) */}
-      <div className="bg-slate-50/70 border border-slate-200/90 rounded-xl p-4 space-y-3">
-        {/* Rollback Notification Banner */}
-        {rollbackFeedback && (
-          <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start justify-between gap-3 text-xs text-emerald-900">
-            <div className="flex items-start gap-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
-              <div>
-                <p className="font-semibold">{rollbackFeedback}</p>
-                <p className="text-[11px] text-emerald-700 mt-0.5">Campaign budget pacing, spend, and KPI totals have been recalculated.</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setRollbackFeedback(null)}
-              className="text-emerald-700 hover:text-emerald-900 font-bold px-1.5 py-0.5 rounded"
-            >
-              ✕
-            </button>
-          </div>
-        )}
-
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div>
-            <div className="flex items-center gap-2">
-              <Link2 className="w-4 h-4 text-indigo-600" />
-              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                Live Platform Data Sources ({metrics.data_sources?.length || 0})
-              </h4>
-              <span
-                className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                  metrics.data_source_status === 'connected'
-                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                    : 'bg-amber-100 text-amber-800 border border-amber-300'
-                }`}
-              >
-                {metrics.data_source_status === 'connected' ? 'Connected' : 'Not Connected'}
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              Live advertising platform campaigns feeding daily spend and performance data into this line item.
-            </p>
-          </div>
-
-          {onConnectDataSource && (
-            <button
-              onClick={() => onConnectDataSource(line_item)}
-              className="self-start sm:self-center inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-2xs transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>
-                {metrics.data_sources && metrics.data_sources.length > 0
-                  ? 'Link Another Platform Campaign'
-                  : 'Connect Data Source'}
-              </span>
-            </button>
-          )}
-        </div>
-
-        {/* Data Sources List */}
-        {!metrics.data_sources || metrics.data_sources.length === 0 ? (
-          <div className="p-4 bg-amber-50/60 border border-amber-200/80 rounded-xl flex items-start gap-3 text-xs text-amber-900">
-            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-            <div className="flex-1 space-y-1">
-              <span className="font-bold">No Platform Campaign Linked</span>
-              <p className="text-[11px] text-amber-800 leading-relaxed">
-                This campaign line item is not currently connected to a live {line_item.platform.toUpperCase()} Ads campaign. Daily delivery metrics cannot be synchronized until mapped.
-              </p>
-              {onConnectDataSource && (
-                <div className="pt-1">
-                  <button
-                    onClick={() => onConnectDataSource(line_item)}
-                    className="inline-flex items-center gap-1 text-xs font-bold text-amber-900 hover:text-amber-950 underline decoration-amber-400 underline-offset-2"
-                  >
-                    Click here to map a platform campaign →
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="divide-y divide-slate-200/60 bg-white rounded-xl border border-slate-200/80 overflow-hidden">
-            {metrics.data_sources.map(ds => (
-              <div
-                key={ds.id}
-                className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-              >
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-slate-900">{ds.platform_campaign_name}</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">
-                      ID: {ds.platform_campaign_id}
-                    </span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      {ds.status}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-slate-500 flex items-center gap-3">
-                    <span>
-                      Ad Account: <strong>{ds.platform_account_name || ds.platform_account_id}</strong> ({ds.platform_account_id})
-                    </span>
-                    <span>•</span>
-                    <span>Linked: {ds.linked_at ? new Date(ds.linked_at).toLocaleDateString() : 'Active'}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => handleUnlink(ds.id, ds.platform_campaign_name || ds.platform_campaign_id)}
-                    disabled={disconnectingId === ds.id}
-                    title="Unlink this ad campaign and roll back all associated spend and metrics from totals"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50/80 hover:bg-rose-100/90 rounded-lg border border-rose-200 transition-colors disabled:opacity-50 shadow-2xs cursor-pointer"
-                  >
-                    {disconnectingId === ds.id ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Unlink className="w-3.5 h-3.5 text-rose-600" />
-                    )}
-                    <span>Unlink &amp; Roll Back Totals</span>
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
       {/* Key Metric Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -590,6 +464,173 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
           <span className="text-slate-400 text-[10px] block uppercase font-medium">Conversions</span>
           <span className="font-bold text-slate-800">{formatNumber(metrics.total_conversions, 0)}</span>
         </div>
+      </div>
+
+      {/* ==================== PLATFORM DATA SOURCE (collapsed by default) ====================
+          Connection plumbing rather than campaign performance, so it sits below
+          the numbers and stays folded away until it needs attention. */}
+      <div className="border border-slate-200/90 rounded-xl overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowDataSources(v => !v)}
+          aria-expanded={showDataSources}
+          className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-slate-50/70 hover:bg-slate-100/70 transition-colors text-left cursor-pointer"
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link2 className="w-4 h-4 text-slate-500 shrink-0" />
+            <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+              Platform Data Source ({metrics.data_sources?.length || 0})
+            </span>
+            <span
+              className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                isConnected
+                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                  : 'bg-amber-100 text-amber-800 border border-amber-300'
+              }`}
+            >
+              {isConnected ? 'Connected' : 'Not Connected'}
+            </span>
+            {!showDataSources && line_item.platform_campaign_id && !line_item.platform_campaign_id.startsWith('cid_') && (
+              <code className="hidden sm:inline font-mono text-[10px] text-slate-500 bg-white border border-slate-200 px-1.5 py-0.5 rounded">
+                {line_item.platform_campaign_id}
+              </code>
+            )}
+          </div>
+          {showDataSources ? (
+            <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+          )}
+        </button>
+
+        {/* Outside the fold: an unlink confirmation must not be hidden by the
+            section that collapses itself. */}
+        {rollbackFeedback && (
+          <div className="m-3 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start justify-between gap-3 text-xs text-emerald-900">
+            <div className="flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+              <div>
+                <p className="font-semibold">{rollbackFeedback}</p>
+                <p className="text-[11px] text-emerald-700 mt-0.5">Campaign budget pacing, spend, and KPI totals have been recalculated.</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setRollbackFeedback(null)}
+              className="text-emerald-700 hover:text-emerald-900 font-bold px-1.5 py-0.5 rounded"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+        {showDataSources && (
+          <div className="p-4 space-y-3 border-t border-slate-200/80">
+            <p className="text-[11px] text-slate-500">
+              The live platform campaigns feeding daily spend and performance into this line item.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/70">
+                <span className="text-[10px] text-slate-400 uppercase font-medium block mb-0.5">Ad Account</span>
+                {line_item.platform_account_id && line_item.platform_account_id !== 'act_default' ? (
+                  <code className="font-mono text-slate-700">{line_item.platform_account_id}</code>
+                ) : (
+                  <span className="text-[11px] font-medium text-amber-700">Unlinked (populates on import)</span>
+                )}
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/70">
+                <span className="text-[10px] text-slate-400 uppercase font-medium block mb-0.5">Platform Campaign ID</span>
+                {line_item.platform_campaign_id && !line_item.platform_campaign_id.startsWith('cid_') ? (
+                  <code className="font-mono text-slate-700">{line_item.platform_campaign_id}</code>
+                ) : (
+                  <span className="text-[11px] font-medium text-amber-700">Pending mapping</span>
+                )}
+              </div>
+            </div>
+
+            {onConnectDataSource && (
+              <div className="flex justify-end">
+                <button
+                  onClick={() => onConnectDataSource(line_item)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-2xs transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>
+                    {metrics.data_sources && metrics.data_sources.length > 0
+                      ? 'Link Another Platform Campaign'
+                      : 'Connect Data Source'}
+                  </span>
+                </button>
+              </div>
+            )}
+
+            {/* Data Sources List */}
+            {!metrics.data_sources || metrics.data_sources.length === 0 ? (
+              <div className="p-4 bg-amber-50/60 border border-amber-200/80 rounded-xl flex items-start gap-3 text-xs text-amber-900">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="flex-1 space-y-1">
+                  <span className="font-bold">No Platform Campaign Linked</span>
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    This campaign line item is not currently connected to a live {line_item.platform.toUpperCase()} Ads campaign. Daily delivery metrics cannot be synchronized until mapped.
+                  </p>
+                  {onConnectDataSource && (
+                    <div className="pt-1">
+                      <button
+                        onClick={() => onConnectDataSource(line_item)}
+                        className="inline-flex items-center gap-1 text-xs font-bold text-amber-900 hover:text-amber-950 underline decoration-amber-400 underline-offset-2"
+                      >
+                        Click here to map a platform campaign →
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-200/60 bg-white rounded-xl border border-slate-200/80 overflow-hidden">
+                {metrics.data_sources.map(ds => (
+                  <div
+                    key={ds.id}
+                    className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-slate-900">{ds.platform_campaign_name}</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">
+                          ID: {ds.platform_campaign_id}
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          {ds.status}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 flex items-center gap-3">
+                        <span>
+                          Ad Account: <strong>{ds.platform_account_name || ds.platform_account_id}</strong> ({ds.platform_account_id})
+                        </span>
+                        <span>•</span>
+                        <span>Linked: {ds.linked_at ? new Date(ds.linked_at).toLocaleDateString() : 'Active'}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => handleUnlink(ds.id, ds.platform_campaign_name || ds.platform_campaign_id)}
+                        disabled={disconnectingId === ds.id}
+                        title="Unlink this ad campaign and roll back all associated spend and metrics from totals"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50/80 hover:bg-rose-100/90 rounded-lg border border-rose-200 transition-colors disabled:opacity-50 shadow-2xs cursor-pointer"
+                      >
+                        {disconnectingId === ds.id ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Unlink className="w-3.5 h-3.5 text-rose-600" />
+                        )}
+                        <span>Unlink &amp; Roll Back Totals</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
