@@ -2737,6 +2737,48 @@ class RelationalDatabase {
     };
   }
 
+  /**
+   * Move every record owned by one agency to another.
+   *
+   * Written for a specific failure mode: records created while the app was
+   * scoped to one tenant become invisible to an account belonging to another,
+   * because every read filters on agency_id. The data is hydrated and then
+   * filtered out of every response, which is indistinguishable from data loss.
+   *
+   * Line item data sources carry no agency_id - they are reached through their
+   * line item - so they move implicitly and need no restamping.
+   */
+  async reassignAgency(fromAgencyId: string, toAgencyId: string): Promise<Record<string, number>> {
+    const groups: [string, { id: string; agency_id: string }[]][] = [
+      ['clients', this.clients],
+      ['brands', this.brands],
+      ['campaigns', this.campaigns],
+      ['line_items', this.lineItems],
+      ['daily_metrics', this.dailyMetrics],
+      ['unmapped_campaigns', this.unmappedCampaigns],
+      ['alerts', this.alerts]
+    ];
+
+    const moved: Record<string, number> = {};
+
+    for (const [collection, rows] of groups) {
+      const mine = rows.filter(r => r.agency_id === fromAgencyId);
+
+      // Chunked so a large metrics table does not open thousands of
+      // concurrent writes.
+      for (let i = 0; i < mine.length; i += 100) {
+        const chunk = mine.slice(i, i + 100);
+        chunk.forEach(row => { row.agency_id = toAgencyId; });
+        await Promise.all(chunk.map(row => saveDoc(collection, row.id, row as any)));
+      }
+
+      moved[collection] = mine.length;
+    }
+
+    console.log(`[Firestore Database] Reassigned ${fromAgencyId} -> ${toAgencyId}:`, moved);
+    return moved;
+  }
+
   getFirestoreStatus(agencyId?: string): {
     connected: boolean;
     projectId: string;

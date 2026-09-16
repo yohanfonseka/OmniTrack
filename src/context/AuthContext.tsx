@@ -67,13 +67,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const list = await ApiService.getAgencies();
       setAgencies(list);
       if (!currentAgency && list.length > 0) {
-        const omni = list.find(a => a.id === 'agency_omni') || list[0];
-        setCurrentAgency(omni);
+        // The signed-in account decides the tenant. This used to hardcode
+        // 'agency_omni', so an account belonging to any other agency opened on
+        // an empty tenant and its data looked deleted.
+        const mine = currentUser?.agency_id ? list.find(a => a.id === currentUser.agency_id) : undefined;
+        setCurrentAgency(mine || list[0]);
       }
     } catch (err) {
       console.error('Failed to load agencies', err);
     }
-  }, [currentAgency]);
+  }, [currentAgency, currentUser]);
 
   const refreshUsers = useCallback(async () => {
     try {

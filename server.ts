@@ -1108,6 +1108,37 @@ async function startServer() {
     }
   });
 
+  /**
+   * Moves every record from one agency to another. A repair tool, not part of
+   * normal operation: data created under one tenant is fetched but filtered out
+   * of every response for an account belonging to another, which looks exactly
+   * like the data having been deleted.
+   */
+  app.post('/api/system/reassign-agency', requireRole('super_user'), async (req, res) => {
+    const from = String(req.body?.from || '').trim();
+    const to = String(req.body?.to || '').trim();
+
+    if (!from || !to) {
+      return res.status(400).json({ error: 'Provide both "from" and "to" agency ids.' });
+    }
+    if (from === to) {
+      return res.status(400).json({ error: 'Source and target agency are the same.' });
+    }
+
+    const known = db.getAgencies().map(a => a.id);
+    const unknown = [from, to].filter(id => !known.includes(id));
+    if (unknown.length > 0) {
+      return res.status(404).json({ error: `Unknown agency id(s): ${unknown.join(', ')}. Known: ${known.join(', ')}` });
+    }
+
+    try {
+      const moved = await db.reassignAgency(from, to);
+      res.json({ success: true, from, to, moved });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to reassign agency' });
+    }
+  });
+
   // ==================== FIRESTORE STATUS / MANUAL SYNC ====================
   app.get('/api/system/firestore-status', (req, res) => {
     res.json(db.getFirestoreStatus(getAgencyId(req)));
