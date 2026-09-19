@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { formatNumber } from '../../lib/formatters';
 import Papa from 'papaparse';
 import { useAuth } from '../../context/AuthContext';
 import { Client, Brand, Campaign, CampaignLineItem, PlatformType, ImportJob } from '../../types';
@@ -9,6 +10,7 @@ import {
   CheckCircle2,
   AlertCircle,
   AlertTriangle,
+  Undo2,
   ArrowRight,
   ArrowLeft,
   RefreshCw,
@@ -51,6 +53,9 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
 
   // Background Processing state
   const [importJob, setImportJob] = useState<ImportJob | null>(null);
+  const [impact, setImpact] = useState<any | null>(null);
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [revertingId, setRevertingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [recentImports, setRecentImports] = useState<ImportJob[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -662,35 +667,77 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
   };
 
   // Execute Background Import - Direct to Unmapped Campaigns
+  // One payload, used for both the dry run and the real thing, so the warning
+  // can never describe a different import from the one that executes.
+  const buildImportPayload = (directToUnmapped: boolean) => {
+    const targetClient = clients.find(c => c.id === selectedClientId);
+    const finalMapping = { ...mappings };
+    if (!finalMapping['platform_campaign_id'] && finalMapping['campaign_name']) {
+      finalMapping['platform_campaign_id'] = finalMapping['campaign_name'];
+    }
+    if (!finalMapping['campaign_name'] && finalMapping['platform_campaign_id']) {
+      finalMapping['campaign_name'] = finalMapping['platform_campaign_id'];
+    }
+    return {
+      client_id: selectedClientId,
+      brand_id: selectedBrandId,
+      campaign_id: selectedCampaignId && selectedCampaignId !== 'auto_create' ? selectedCampaignId : undefined,
+      platform: selectedPlatform,
+      file_name: fileName || `${selectedPlatform}_import.csv`,
+      csv_content: csvContent,
+      column_mapping: finalMapping,
+      campaign_matches: {},
+      currency: importCurrency || targetClient?.currency || 'LKR',
+      direct_to_unmapped: directToUnmapped
+    };
+  };
+
+  // Dry run on entering the review step, and again whenever the mapping or the
+  // destination changes - both alter where rows land.
+  useEffect(() => {
+    if (step !== 3 || !currentAgency || !selectedClientId || !selectedBrandId || !csvContent) return;
+    if (!mappings['report_date'] || !mappings['spend']) return;
+
+    let cancelled = false;
+    setImpactLoading(true);
+    ApiService.previewImportImpact(currentAgency.id, buildImportPayload(true))
+      .then(res => { if (!cancelled) setImpact(res); })
+      .catch(() => { if (!cancelled) setImpact(null); })
+      .finally(() => { if (!cancelled) setImpactLoading(false); });
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, currentAgency?.id, selectedClientId, selectedBrandId, selectedCampaignId, csvContent, JSON.stringify(mappings), importCurrency]);
+
+  const handleRevertImport = async (job: ImportJob) => {
+    if (!currentAgency) return;
+    if (!window.confirm(`Remove the data "${job.file_name}" imported?\n\nDays it overwrote will be left empty rather than restored to their previous values - re-import the correct file to refill them.`)) return;
+    setRevertingId(job.id);
+    try {
+      const res = await ApiService.revertImport(currentAgency.id, job.id);
+      const empty = res.line_items_left_empty || [];
+      alert(
+        `Removed ${res.metrics_removed} daily metric rows` +
+        (res.unmapped_rows_removed ? ` and ${res.unmapped_rows_removed} unmapped rows` : '') + '.' +
+        (empty.length ? `\n\n${empty.length} line item(s) now hold no data: ${empty.map((l: any) => l.name).join(', ')}` : '')
+      );
+      window.dispatchEvent(new CustomEvent('refresh-omnitrack'));
+      window.dispatchEvent(new CustomEvent('campaigns-updated'));
+      loadRecentImports();
+    } catch (err: any) {
+      alert(err.message || 'Failed to revert import');
+    } finally {
+      setRevertingId(null);
+    }
+  };
+
   const handleExecuteImport = async (directToUnmapped = true) => {
     if (!currentAgency) return;
     setIsSubmitting(true);
     setErrorMsg(null);
 
-    const targetClient = clients.find(c => c.id === selectedClientId);
-
     try {
-      // Ensure platform_campaign_id and campaign_name are aligned in column_mapping
-      const finalMapping = { ...mappings };
-      if (!finalMapping['platform_campaign_id'] && finalMapping['campaign_name']) {
-        finalMapping['platform_campaign_id'] = finalMapping['campaign_name'];
-      }
-      if (!finalMapping['campaign_name'] && finalMapping['platform_campaign_id']) {
-        finalMapping['campaign_name'] = finalMapping['platform_campaign_id'];
-      }
-
-      const job = await ApiService.executeImport(currentAgency.id, {
-        client_id: selectedClientId,
-        brand_id: selectedBrandId,
-        campaign_id: selectedCampaignId && selectedCampaignId !== 'auto_create' ? selectedCampaignId : undefined,
-        platform: selectedPlatform,
-        file_name: fileName || `${selectedPlatform}_import.csv`,
-        csv_content: csvContent,
-        column_mapping: finalMapping,
-        campaign_matches: {},
-        currency: importCurrency || targetClient?.currency || 'LKR',
-        direct_to_unmapped: directToUnmapped
-      });
+      const job = await ApiService.executeImport(currentAgency.id, buildImportPayload(directToUnmapped));
 
       setImportJob(job);
       setStep(4); // Summary / Ingestion step
@@ -1143,6 +1190,98 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
               </div>
             </div>
 
+            {/* What this import will actually do, computed server-side from the
+                same payload the ingest button sends. */}
+            {impactLoading && (
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-500 flex items-center gap-2">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Checking what this file will change...</span>
+              </div>
+            )}
+
+            {!impactLoading && impact && (
+              <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
+                  <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">Before you import</span>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    {impact.file_first_date
+                      ? <>This file covers <strong className="text-slate-700">{impact.file_first_date}</strong> to <strong className="text-slate-700">{impact.file_last_date}</strong>.</>
+                      : 'No dated rows found in this file.'}
+                  </p>
+                </div>
+
+                <div className="p-4 space-y-3">
+                  {impact.summary.overlap_days > 0 && (
+                    <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-700">
+                      <strong className="text-slate-900">{impact.summary.overlap_days} day(s)</strong> across{' '}
+                      <strong className="text-slate-900">{impact.summary.existing_targets}</strong> existing line item(s)
+                      already hold data and will be <strong>replaced</strong> by this file
+                      {impact.summary.overlap_existing_spend > 0 && <> (currently {formatNumber(impact.summary.overlap_existing_spend, 2)} spend)</>}.
+                      Re-uploading the same days is safe - they overwrite rather than add up.
+                    </div>
+                  )}
+
+                  {impact.summary.new_targets > 0 && (
+                    <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="block text-amber-950">
+                            {impact.summary.new_targets} ad set(s) in this file match nothing you already have
+                          </strong>
+                          <p className="mt-0.5 leading-relaxed">
+                            They will be created as new records. That is correct for genuinely new ad sets. If any of
+                            them is one you already track that was <strong>renamed on the platform</strong>, importing
+                            now counts its spend twice, under both names. Your export has no ad set ID column to
+                            recognise a rename by - adding one (Meta: Ad Set ID, TikTok: Ad group ID) prevents this.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {impact.summary.overlap_days === 0 && impact.summary.new_targets === 0 && (
+                    <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-600">
+                      Nothing in this file overlaps existing data and nothing new will be created.
+                    </div>
+                  )}
+
+                  <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-56">
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="bg-slate-50 text-slate-500 font-semibold uppercase text-[10px] sticky top-0">
+                        <tr>
+                          <th className="py-2 px-3">Ad set in file</th>
+                          <th className="py-2 px-3">Destination</th>
+                          <th className="py-2 px-3">Days</th>
+                          <th className="py-2 px-3">Overlapping days</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {impact.targets.map((t: any) => {
+                          const isNew = t.destination === 'new_line_item' || t.destination === 'new_unmapped';
+                          return (
+                            <tr key={t.item_key} className={isNew ? 'bg-amber-50/40' : ''}>
+                              <td className="py-2 px-3 text-slate-800 font-medium truncate max-w-[240px]" title={t.label}>{t.label}</td>
+                              <td className="py-2 px-3">
+                                <span className={`px-1.5 py-0.5 rounded font-semibold ${isNew ? 'bg-amber-100 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>
+                                  {isNew ? 'Created new' : 'Existing'}
+                                </span>
+                                {t.line_item_name && <span className="text-slate-400 ml-1.5 truncate">{t.line_item_name}</span>}
+                              </td>
+                              <td className="py-2 px-3 text-slate-600">{t.days}</td>
+                              <td className="py-2 px-3 text-slate-600">
+                                {t.overlap_days > 0 ? `${t.overlap_days} (${t.overlap_first}..${t.overlap_last})` : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-between items-center pt-4 border-t border-slate-100">
               <button
                 onClick={() => setStep(2)}
@@ -1272,9 +1411,11 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
 
               {/* Deduplication Guarantee Note */}
               <div className="p-3 rounded-lg bg-emerald-50/80 border border-emerald-200 text-xs text-emerald-900">
-                <strong>Deduplication Verified: </strong>
-                Daily metrics are keyed by composite tuple <code>(agency_id, line_item_id, platform_campaign_id, report_date)</code>.
-                Re-uploading records for existing dates automatically refreshes values without inflating or double-counting spend.
+                <strong>Deduplication: </strong>
+                Daily metrics are keyed by <code>(agency_id, line_item_id, platform_campaign_id, report_date)</code>, so
+                re-uploading the same days refreshes them instead of adding them up. An ad set renamed on the platform
+                reads as a new one, though - include an ad set ID column in your export so renames are recognised.
+                Any import can be undone from the history below.
               </div>
 
               <div className="flex justify-end gap-3 pt-2">
@@ -1325,6 +1466,7 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                   <th className="py-2.5 px-3">Rows Processed</th>
                   <th className="py-2.5 px-3">Deduplicated Updates</th>
                   <th className="py-2.5 px-3">Timestamp</th>
+                  <th className="py-2.5 px-3 text-right">Undo</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1349,6 +1491,22 @@ export const CsvImportWizard: React.FC<CsvImportWizardProps> = ({ onImportComple
                     <td className="py-2.5 px-3 text-indigo-600 font-semibold">{imp.updated_count}</td>
                     <td className="py-2.5 px-3 text-slate-500 font-mono text-[11px]">
                       {imp.started_at ? new Date(imp.started_at).toLocaleTimeString() : '—'}
+                    </td>
+                    <td className="py-2.5 px-3 text-right">
+                      {imp.status === 'completed' && (
+                        <button
+                          type="button"
+                          onClick={() => handleRevertImport(imp)}
+                          disabled={revertingId === imp.id}
+                          title="Remove the rows this import wrote"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-rose-700 bg-rose-50/80 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
+                        >
+                          {revertingId === imp.id
+                            ? <RefreshCw className="w-3 h-3 animate-spin" />
+                            : <Undo2 className="w-3 h-3" />}
+                          <span>Revert</span>
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

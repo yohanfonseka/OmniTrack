@@ -2779,6 +2779,88 @@ class RelationalDatabase {
     return moved;
   }
 
+  /**
+   * Undoes one import by removing the rows it wrote, in the mapped daily
+   * metrics and in the unmapped queue alike.
+   *
+   * It removes rather than restores. A day this import overwrote had a previous
+   * value, and that value is not kept anywhere, so reverting leaves the day
+   * absent rather than back as it was - re-import the correct file to refill it.
+   *
+   * Line items the import created are left alone: they may have been edited
+   * since, and deleting records is the more expensive mistake. Any that are
+   * left holding no data are named in the result so they can be removed by hand.
+   */
+  async revertImport(agencyId: string, importId: string): Promise<{
+    metrics_removed: number;
+    unmapped_rows_removed: number;
+    unmapped_records_removed: number;
+    line_items_left_empty: { id: string; name: string }[];
+  }> {
+    const doomed = this.dailyMetrics.filter(m => m.agency_id === agencyId && m.import_id === importId);
+    const touchedLineItems = new Set(doomed.map(m => m.line_item_id));
+    const touchedCampaigns = new Set(doomed.map(m => m.campaign_id));
+
+    this.dailyMetrics = this.dailyMetrics.filter(m => !(m.agency_id === agencyId && m.import_id === importId));
+    for (let i = 0; i < doomed.length; i += 100) {
+      await Promise.all(doomed.slice(i, i + 100).map(m => deleteDocById('daily_metrics', m.id)));
+    }
+
+    let unmappedRowsRemoved = 0;
+    const unmappedToDelete: string[] = [];
+
+    for (const u of this.unmappedCampaigns.filter(x => x.agency_id === agencyId)) {
+      const kept = (u.metrics || []).filter((m: any) => m.import_id !== importId);
+      if (kept.length === (u.metrics || []).length) continue;
+
+      unmappedRowsRemoved += (u.metrics || []).length - kept.length;
+
+      if (kept.length === 0) {
+        unmappedToDelete.push(u.id);
+        continue;
+      }
+
+      const sum = (f: string) => kept.reduce((s: number, m: any) => s + (m[f] || 0), 0);
+      const dates = kept.map((m: any) => m.report_date).sort();
+      this.updateUnmappedCampaign(agencyId, u.id, {
+        metrics: kept,
+        row_count: kept.length,
+        total_spend: sum('spend'),
+        total_impressions: sum('impressions'),
+        total_clicks: sum('clicks'),
+        total_conversions: sum('conversions'),
+        total_conversion_value: sum('conversion_value'),
+        total_video_views: sum('video_views'),
+        first_report_date: dates[0],
+        last_report_date: dates[dates.length - 1]
+      } as any);
+    }
+
+    for (const id of unmappedToDelete) {
+      this.unmappedCampaigns = this.unmappedCampaigns.filter(u => u.id !== id);
+      await deleteDocById('unmapped_campaigns', id);
+    }
+
+    // Budgets are derived from line item budgets rather than delivery, but the
+    // campaign totals shown alongside them are recomputed for consistency.
+    touchedCampaigns.forEach(id => { if (id) this.recalculateCampaignBudget(id); });
+
+    const leftEmpty = [...touchedLineItems]
+      .map(id => this.lineItems.find(l => l.id === id))
+      .filter((l): l is NonNullable<typeof l> => !!l)
+      .filter(l => this.dailyMetrics.every(m => m.line_item_id !== l.id))
+      .map(l => ({ id: l.id, name: l.name }));
+
+    console.log(`[Firestore Database] Reverted import ${importId}: ${doomed.length} metrics, ${unmappedRowsRemoved} unmapped rows, ${unmappedToDelete.length} unmapped records.`);
+
+    return {
+      metrics_removed: doomed.length,
+      unmapped_rows_removed: unmappedRowsRemoved,
+      unmapped_records_removed: unmappedToDelete.length,
+      line_items_left_empty: leftEmpty
+    };
+  }
+
   getFirestoreStatus(agencyId?: string): {
     connected: boolean;
     projectId: string;

@@ -67,6 +67,41 @@ export interface ImportExecuteParams {
   direct_to_unmapped?: boolean;
 }
 
+export interface ImportImpactTarget {
+  item_key: string;
+  label: string;
+  rows: number;
+  days: number;
+  first_date: string;
+  last_date: string;
+  file_spend: number;
+  /** Where these rows will land if the import runs as configured. */
+  destination: 'existing_line_item' | 'new_line_item' | 'existing_unmapped' | 'new_unmapped';
+  line_item_name?: string;
+  campaign_name?: string;
+  /** Days already holding data that this import will overwrite. */
+  overlap_days: number;
+  overlap_first?: string;
+  overlap_last?: string;
+  overlap_existing_spend: number;
+}
+
+export interface ImportImpact {
+  file_first_date: string | null;
+  file_last_date: string | null;
+  rows_total: number;
+  rows_empty: number;
+  rows_undated: number;
+  targets: ImportImpactTarget[];
+  summary: {
+    existing_targets: number;
+    new_targets: number;
+    overlap_days: number;
+    overlap_existing_spend: number;
+    file_spend: number;
+  };
+}
+
 export class CsvEngine {
   private static readonly MONTH_ABBR: Record<string, string> = {
     jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
@@ -459,6 +494,238 @@ export class CsvEngine {
   }
 
   /**
+   * Reports what an import will do before it does it: which line items already
+   * hold data for the days in the file (those days get overwritten), and which
+   * ad sets match nothing and will be created.
+   *
+   * That second number is the one that matters. A day re-sent for a line item
+   * you already have is a correction and replaces cleanly. An ad set that
+   * matches nothing creates a parallel line item and double counts the same
+   * delivery - which is what happens when an ad set is renamed on the platform
+   * and the export carries no id column to recognise it by.
+   *
+   * It mirrors the resolution in processImportAsync and creates nothing.
+   */
+  static analyzeImpact(params: ImportExecuteParams): ImportImpact {
+    const parsed = Papa.parse(params.csv_content.trim(), { header: true, skipEmptyLines: true });
+    const rows = parsed.data as Record<string, any>[];
+    const map = params.column_mapping;
+    const matches = params.campaign_matches || {};
+    const defaultCampaign = params.campaign_id
+      ? db.getCampaignById(params.agency_id, params.campaign_id)
+      : undefined;
+
+    const parseVal = (val: any) => {
+      if (val === undefined || val === null || val === '') return 0;
+      const num = parseFloat(String(val).replace(/[^0-9.-]/g, ''));
+      return isNaN(num) ? 0 : num;
+    };
+
+    interface Bucket {
+      item_key: string;
+      label: string;
+      rawCampId: string;
+      csvCampName: string;
+      csvAdSetName: string;
+      rawCamp: string;
+      dates: Set<string>;
+      rows: number;
+      spend: number;
+    }
+
+    const buckets = new Map<string, Bucket>();
+    let rowsEmpty = 0;
+    let rowsUndated = 0;
+    const allDates: string[] = [];
+
+    rows.forEach((row, idx) => {
+      if (CsvEngine.isEmptyMetricRow(row, map)) {
+        rowsEmpty += 1;
+        return;
+      }
+      const reportDate = CsvEngine.normalizeReportDate(row[map['report_date']]);
+      if (!reportDate) {
+        rowsUndated += 1;
+        return;
+      }
+      allDates.push(reportDate);
+
+      const rawCamp = String(row[map['campaign_name']] || '').trim();
+      const rawAdSet = String(row[map['line_item_name']] || '').trim();
+      const rawCampId = String(row[map['platform_campaign_id']] || '').trim();
+      const csvCampName = rawCamp || (defaultCampaign ? defaultCampaign.name : 'General Campaign');
+      const csvAdSetName = rawAdSet || (rawCamp ? `Ad Set ${idx + 1}` : `Line Item ${idx + 1}`);
+      const itemKey = rawCampId || `${csvCampName}:::${csvAdSetName}`;
+
+      let bucket = buckets.get(itemKey);
+      if (!bucket) {
+        bucket = {
+          item_key: itemKey,
+          label: rawCamp && rawAdSet && rawCamp !== rawAdSet ? `${rawCamp} › ${rawAdSet}` : (rawAdSet || csvCampName),
+          rawCampId,
+          csvCampName,
+          csvAdSetName,
+          rawCamp,
+          dates: new Set<string>(),
+          rows: 0,
+          spend: 0
+        };
+        buckets.set(itemKey, bucket);
+      }
+      bucket.dates.add(reportDate);
+      bucket.rows += 1;
+      bucket.spend += parseVal(row[map['spend']]);
+    });
+
+    const targets: ImportImpactTarget[] = [];
+
+    for (const b of buckets.values()) {
+      const targetId =
+        matches[b.item_key] ||
+        (b.rawCampId ? matches[b.rawCampId] : '') ||
+        matches[b.csvAdSetName] ||
+        (b.rawCamp ? matches[b.rawCamp] : '') ||
+        (b.rawCampId ? matches[b.rawCampId.toLowerCase()] : '') ||
+        (b.csvAdSetName ? matches[b.csvAdSetName.toLowerCase()] : '') ||
+        (defaultCampaign ? `camp:${defaultCampaign.id}` : '');
+
+      const cleanTargetId = targetId ? targetId.replace(/^(line:|camp:|create_line:|create_camp:)/, '').trim() : '';
+
+      const dates = [...b.dates].sort();
+      const base = {
+        item_key: b.item_key,
+        label: b.label,
+        rows: b.rows,
+        days: dates.length,
+        first_date: dates[0],
+        last_date: dates[dates.length - 1],
+        file_spend: Math.round(b.spend * 100) / 100
+      };
+
+      const goesToUnmapped =
+        params.direct_to_unmapped ||
+        cleanTargetId === 'unmapped' ||
+        cleanTargetId === 'leave_unmapped' ||
+        cleanTargetId === 'unallocated' ||
+        targetId === 'unallocated';
+
+      if (goesToUnmapped) {
+        // Matches how the import finds an existing unmapped record to merge into.
+        const existing = db.getUnmappedCampaigns(params.agency_id).find(
+          u => u.platform === params.platform &&
+               u.status === 'unmapped' &&
+               (u.platform_campaign_id === (b.rawCampId || b.label) || u.platform_campaign_name === b.label)
+        );
+        const held = new Set((existing?.metrics || []).map((m: any) => m.report_date));
+        const overlap = dates.filter(d => held.has(d));
+        targets.push({
+          ...base,
+          destination: existing ? 'existing_unmapped' : 'new_unmapped',
+          overlap_days: overlap.length,
+          overlap_first: overlap[0],
+          overlap_last: overlap[overlap.length - 1],
+          overlap_existing_spend: Math.round(
+            (existing?.metrics || [])
+              .filter((m: any) => held.has(m.report_date) && overlap.includes(m.report_date))
+              .reduce((s: number, m: any) => s + (m.spend || 0), 0) * 100
+          ) / 100
+        });
+        continue;
+      }
+
+      // Resolve to an existing line item without creating anything.
+      let line = undefined as any;
+
+      if (targetId.startsWith('line:') && cleanTargetId) {
+        line = db.getLineItemById(params.agency_id, cleanTargetId);
+      }
+
+      if (!line && targetId.startsWith('camp:') && cleanTargetId) {
+        const camp = db.getCampaignById(params.agency_id, cleanTargetId);
+        if (camp) {
+          line = db.getLineItems(params.agency_id, camp.id).find(
+            l => (b.rawCampId && l.platform_campaign_id === b.rawCampId) ||
+                 (b.csvAdSetName && l.name.toLowerCase() === b.csvAdSetName.toLowerCase())
+          );
+        }
+      }
+
+      if (!line && targetId.startsWith('create_camp:')) {
+        const wanted = (cleanTargetId || b.csvCampName).toLowerCase();
+        const camp = db.getCampaigns(params.agency_id, params.client_id, params.brand_id)
+          .find(c => c.name.toLowerCase() === wanted);
+        if (camp) {
+          line = db.getLineItems(params.agency_id, camp.id).find(
+            l => (b.rawCampId && l.platform_campaign_id === b.rawCampId) ||
+                 (b.csvAdSetName && l.name.toLowerCase() === b.csvAdSetName.toLowerCase())
+          );
+        }
+      }
+
+      if (!line && b.rawCampId) {
+        const ds = db.findDataSourceByPlatformCampaign(params.agency_id, params.platform, b.rawCampId);
+        if (ds) line = db.getLineItemById(params.agency_id, ds.line_item_id);
+      }
+
+      if (!line && b.csvAdSetName) {
+        for (const camp of db.getCampaigns(params.agency_id, params.client_id, params.brand_id)) {
+          const hit = db.getLineItems(params.agency_id, camp.id).find(l =>
+            l.name.toLowerCase() === b.csvAdSetName.toLowerCase() ||
+            l.name.toLowerCase().includes(b.csvAdSetName.toLowerCase())
+          );
+          if (hit) { line = hit; break; }
+        }
+      }
+
+      if (!line) {
+        targets.push({
+          ...base,
+          destination: 'new_line_item',
+          overlap_days: 0,
+          overlap_existing_spend: 0
+        });
+        continue;
+      }
+
+      const held = db.getDailyMetrics(params.agency_id, line.id);
+      const heldByDate = new Map<string, number>();
+      held.forEach(m => heldByDate.set(m.report_date, (heldByDate.get(m.report_date) || 0) + m.spend));
+      const overlap = dates.filter(d => heldByDate.has(d));
+      const campaign = db.getCampaignById(params.agency_id, line.campaign_id);
+
+      targets.push({
+        ...base,
+        destination: 'existing_line_item',
+        line_item_name: line.name,
+        campaign_name: campaign?.name,
+        overlap_days: overlap.length,
+        overlap_first: overlap[0],
+        overlap_last: overlap[overlap.length - 1],
+        overlap_existing_spend: Math.round(overlap.reduce((s, d) => s + (heldByDate.get(d) || 0), 0) * 100) / 100
+      });
+    }
+
+    const sorted = allDates.sort();
+    const isNew = (t: ImportImpactTarget) => t.destination === 'new_line_item' || t.destination === 'new_unmapped';
+
+    return {
+      file_first_date: sorted[0] || null,
+      file_last_date: sorted[sorted.length - 1] || null,
+      rows_total: rows.length,
+      rows_empty: rowsEmpty,
+      rows_undated: rowsUndated,
+      targets: targets.sort((a, b2) => b2.overlap_days - a.overlap_days || a.label.localeCompare(b2.label)),
+      summary: {
+        existing_targets: targets.filter(t => !isNew(t)).length,
+        new_targets: targets.filter(isNew).length,
+        overlap_days: targets.reduce((s, t) => s + t.overlap_days, 0),
+        overlap_existing_spend: Math.round(targets.reduce((s, t) => s + t.overlap_existing_spend, 0) * 100) / 100,
+        file_spend: Math.round(targets.reduce((s, t) => s + t.file_spend, 0) * 100) / 100
+      }
+    };
+  }
+
+  /**
    * Executes the import job in the background with deduplication
    */
   static processImportAsync(params: ImportExecuteParams): ImportJob {
@@ -527,6 +794,7 @@ export class CsvEngine {
 
           const existing = entry.metrics.find(m => m.report_date === reportDate);
           if (existing) {
+            existing.import_id = job.id;
             existing.spend += parseRowVal(row[map['spend']]);
             existing.impressions += imprVal;
             // Reach counts distinct people, so it cannot be added up.
@@ -540,6 +808,9 @@ export class CsvEngine {
           }
 
           entry.metrics.push({
+            // Stamped so an import can be reverted from the unmapped queue too.
+            // A later import that replaces this day takes ownership of it.
+            import_id: job.id,
             report_date: reportDate,
             spend: parseRowVal(row[map['spend']]),
             impressions: imprVal,

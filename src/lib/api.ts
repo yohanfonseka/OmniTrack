@@ -515,6 +515,17 @@ export class ApiService {
     });
   }
 
+  static previewImportImpact(agencyId: string, data: any): Promise<any> {
+    return this.request<any>('/api/imports/preview-impact', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    }, agencyId);
+  }
+
+  static revertImport(agencyId: string, importId: string): Promise<any> {
+    return this.request<any>(`/api/imports/${importId}/revert`, { method: 'POST' }, agencyId);
+  }
+
   static getSystemCapabilities(): Promise<{ destructive_testing: boolean }> {
     return this.request<{ destructive_testing: boolean }>('/api/system/capabilities');
   }

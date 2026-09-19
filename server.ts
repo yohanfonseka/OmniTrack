@@ -922,6 +922,66 @@ async function startServer() {
     }
   });
 
+  /**
+   * What the same payload would do if executed: which line items already hold
+   * the days in the file, and which ad sets match nothing and would be created.
+   * Takes exactly the body /execute takes, so the answer describes the import
+   * the user is about to run rather than an approximation of it.
+   */
+  app.post('/api/imports/preview-impact', (req, res) => {
+    const agencyId = getAgencyId(req);
+    const {
+      client_id, brand_id, campaign_id, platform, csv_content,
+      column_mapping, campaign_matches, currency, direct_to_unmapped
+    } = req.body;
+
+    if (!client_id || !brand_id || !platform || !csv_content) {
+      return res.status(400).json({ error: 'client_id, brand_id, platform, and csv_content are required' });
+    }
+
+    try {
+      const impact = CsvEngine.analyzeImpact({
+        agency_id: agencyId,
+        client_id,
+        brand_id,
+        campaign_id,
+        platform,
+        file_name: 'preview',
+        csv_content,
+        column_mapping: column_mapping || {},
+        campaign_matches: campaign_matches || {},
+        currency: currency || 'LKR',
+        direct_to_unmapped: direct_to_unmapped !== false
+      });
+      res.json(impact);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Could not analyse the file' });
+    }
+  });
+
+  /** Removes the rows a given import wrote. See db.revertImport for what it does not do. */
+  app.post('/api/imports/:id/revert', async (req, res) => {
+    const agencyId = getAgencyId(req);
+    const job = db.getImports(agencyId).find(j => j.id === req.params.id);
+    if (!job) return res.status(404).json({ error: 'Import not found.' });
+
+    try {
+      const result = await db.revertImport(agencyId, req.params.id);
+      db.addAuditLog({
+        agency_id: agencyId,
+        user_id: (req as AuthedRequest).appUser?.id || 'system',
+        user_name: (req as AuthedRequest).appUser?.name || 'System',
+        action: 'REVERTED_CSV_IMPORT',
+        entity_type: 'import',
+        entity_id: job.id,
+        details: `Reverted "${job.file_name}": removed ${result.metrics_removed} daily metrics and ${result.unmapped_rows_removed} unmapped rows.`
+      });
+      res.json({ success: true, file_name: job.file_name, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to revert import' });
+    }
+  });
+
   app.post('/api/imports/execute', (req, res) => {
     const agencyId = getAgencyId(req);
     const {
