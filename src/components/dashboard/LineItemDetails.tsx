@@ -90,7 +90,7 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
 
   const handleDisconnect = async (sourceId: string, campaignName: string) => {
     const confirmed = window.confirm(
-      `Disconnect & Roll Back Totals?\n\nDisconnecting "${campaignName}" will stop live metric synchronization and roll back associated ad spend and metrics from campaign totals.`
+      `Disconnect & Roll Back Totals?\n\nDisconnecting "${campaignName}" unlinks it from this line item and rolls its spend and metrics back out of the campaign totals. Future imports for it will not be attributed here.`
     );
     if (!confirmed) return;
 
@@ -434,7 +434,7 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
         <div className="p-4 bg-slate-50 border border-slate-200/70 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-500">
           <div className="flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-slate-400 shrink-0" />
-            <span>Daily Reporting Metrics: Initialized at zero. Reporting graph will populate upon platform sync or CSV import.</span>
+            <span>No daily delivery recorded for this line item yet. Import a platform report to populate this chart.</span>
           </div>
           <span className="font-mono text-[11px] font-semibold text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200 shrink-0">
             0 reporting days
@@ -570,7 +570,7 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
                 <div className="flex-1 space-y-1">
                   <span className="font-bold">No Platform Campaign Linked</span>
                   <p className="text-[11px] text-amber-800 leading-relaxed">
-                    This campaign line item is not currently connected to a live {line_item.platform.toUpperCase()} Ads campaign. Daily delivery metrics cannot be synchronized until mapped.
+                    This line item is not linked to a {line_item.platform.toUpperCase()} Ads campaign, so imported delivery is not attributed to it. Link one to start counting its daily metrics here.
                   </p>
                   {onConnectDataSource && (
                     <div className="pt-1">
