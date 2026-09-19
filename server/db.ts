@@ -14,6 +14,7 @@ import {
   AuditLog,
   UnmappedCampaign,
   PlatformType,
+  KpiMetricType,
   LineItemDataSource
 } from './types.js';
 import {
@@ -2859,6 +2860,213 @@ class RelationalDatabase {
       unmapped_records_removed: unmappedToDelete.length,
       line_items_left_empty: leftEmpty
     };
+  }
+
+  /**
+   * Builds a demo dataset for showing the platform to someone.
+   *
+   * Three things the old seed got wrong and this does not: dates are anchored
+   * to today rather than hardcoded, so the dashboard never looks abandoned;
+   * every record is written to Firestore, so a restart mid-demo does not empty
+   * it; and every id carries a `demo_` prefix so removeDemoDataset can take
+   * exactly this data out afterwards and nothing else.
+   *
+   * The numbers are shaped, not random. A dashboard where everything is green
+   * demonstrates nothing, so the set deliberately contains a campaign pacing
+   * well, one overspending, and one underdelivering against its KPI.
+   */
+  async seedDemoDataset(agencyId: string, today = new Date()): Promise<Record<string, number>> {
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const shift = (days: number) => {
+      const d = new Date(today);
+      d.setUTCDate(d.getUTCDate() + days);
+      return iso(d);
+    };
+    const now = new Date().toISOString();
+
+    // Metrics run to yesterday: platforms do not report a day until it closes,
+    // and a half-empty today would read as a gap.
+    const DAYS = 30;
+    const flightStart = shift(-DAYS);
+    const flightEnd = shift(14);
+
+    const clients = [
+      { id: 'demo_client_fonterra', name: 'Fonterra Brands Lanka', industry: 'FMCG & Dairy', currency: 'LKR', contact_person: 'Dilani Jayawardena', contact_email: 'dilani@fonterra.lk' },
+      { id: 'demo_client_singer', name: 'Singer Sri Lanka', industry: 'Consumer Electronics & Retail', currency: 'LKR', contact_person: 'Roshan Silva', contact_email: 'roshan@singer.lk' },
+      { id: 'demo_client_serendib', name: 'Serendib Resorts', industry: 'Travel & Hospitality', currency: 'USD', contact_person: 'Ayesha Fernando', contact_email: 'ayesha@serendibresorts.com' }
+    ];
+
+    const brands = [
+      { id: 'demo_brand_ratthi', client_id: 'demo_client_fonterra', name: 'Ratthi', description: 'Everyday milk powder', default_currency: 'LKR' },
+      { id: 'demo_brand_anchor', client_id: 'demo_client_fonterra', name: 'Anchor Newdale', description: 'Yoghurt and dairy snacks', default_currency: 'LKR' },
+      { id: 'demo_brand_singer_home', client_id: 'demo_client_singer', name: 'Singer Home Appliances', description: 'Kitchen and home range', default_currency: 'LKR' },
+      { id: 'demo_brand_serendib', client_id: 'demo_client_serendib', name: 'Serendib Beach Collection', description: 'Coastal resort portfolio', default_currency: 'USD' }
+    ];
+
+    // health: how this campaign should read on the dashboard.
+    const campaigns = [
+      { id: 'demo_camp_ratthi', client_id: 'demo_client_fonterra', brand_id: 'demo_brand_ratthi', name: 'Ratthi Sachet Launch', description: 'Launch burst for the 20g sachet', objective: 'Reach', currency: 'LKR', health: 'good' },
+      { id: 'demo_camp_newdale', client_id: 'demo_client_fonterra', brand_id: 'demo_brand_anchor', name: 'Newdale Always On', description: 'Always-on yoghurt awareness', objective: 'Video Views', currency: 'LKR', health: 'overspending' },
+      { id: 'demo_camp_singer', client_id: 'demo_client_singer', brand_id: 'demo_brand_singer_home', name: 'Singer Avurudu Offers', description: 'Seasonal appliance promotion', objective: 'Conversions', currency: 'LKR', health: 'good' },
+      { id: 'demo_camp_serendib', client_id: 'demo_client_serendib', brand_id: 'demo_brand_serendib', name: 'Serendib Winter Escapes', description: 'European winter season drive', objective: 'Conversions', currency: 'USD', health: 'underdelivering' }
+    ];
+
+    // Each line item is one platform buy inside a campaign. KPI targets are
+    // sized against what the delivery below actually produces at this point in
+    // the flight, so an on-track line reads on-track rather than failing a
+    // number picked out of the air.
+    const lines = [
+      { id: 'demo_line_ratthi_meta', campaign_id: 'demo_camp_ratthi', platform: 'meta' as PlatformType, name: 'Ratthi | Meta Reach | Sachet', budget: 850000, primary_kpi: 'reach' as KpiMetricType, primary_kpi_target: 2138000, buying_kpi: 'cpm' as KpiMetricType, buying_kpi_target: 320, cpm: 310, ctr: 0.0135, pace: 1.0 },
+      { id: 'demo_line_ratthi_tiktok', campaign_id: 'demo_camp_ratthi', platform: 'tiktok' as PlatformType, name: 'Ratthi | TikTok Video | Sachet', budget: 520000, primary_kpi: 'video_views' as KpiMetricType, primary_kpi_target: 1099000, buying_kpi: 'cpv' as KpiMetricType, buying_kpi_target: 0.22, cpm: 240, ctr: 0.009, pace: 0.97 },
+      { id: 'demo_line_newdale_meta', campaign_id: 'demo_camp_newdale', platform: 'meta' as PlatformType, name: 'Newdale | Meta Video | Always On', budget: 600000, primary_kpi: 'video_views' as KpiMetricType, primary_kpi_target: 1272000, buying_kpi: 'cpv' as KpiMetricType, buying_kpi_target: 0.35, cpm: 355, ctr: 0.011, pace: 1.38 },
+      { id: 'demo_line_newdale_google', campaign_id: 'demo_camp_newdale', platform: 'google' as PlatformType, name: 'Newdale | YouTube Bumper', budget: 380000, primary_kpi: 'impressions' as KpiMetricType, primary_kpi_target: 1565000, buying_kpi: 'cpm' as KpiMetricType, buying_kpi_target: 290, cpm: 335, ctr: 0.006, pace: 1.31 },
+      { id: 'demo_line_singer_meta', campaign_id: 'demo_camp_singer', platform: 'meta' as PlatformType, name: 'Singer | Meta Conversions | Avurudu', budget: 1250000, primary_kpi: 'conversions' as KpiMetricType, primary_kpi_target: 2360, buying_kpi: 'cpa' as KpiMetricType, buying_kpi_target: 520, cpm: 405, ctr: 0.021, cvr: 0.038, pace: 1.03 },
+      { id: 'demo_line_singer_google', campaign_id: 'demo_camp_singer', platform: 'google' as PlatformType, name: 'Singer | Search | Appliances', budget: 700000, primary_kpi: 'conversions' as KpiMetricType, primary_kpi_target: 2620, buying_kpi: 'cpa' as KpiMetricType, buying_kpi_target: 470, cpm: 620, ctr: 0.048, cvr: 0.055, pace: 0.99 },
+      { id: 'demo_line_serendib_meta', campaign_id: 'demo_camp_serendib', platform: 'meta' as PlatformType, name: 'Serendib | Meta Conversions | EU', budget: 9500, primary_kpi: 'conversions' as KpiMetricType, primary_kpi_target: 340, buying_kpi: 'cpa' as KpiMetricType, buying_kpi_target: 29, cpm: 7.4, ctr: 0.016, cvr: 0.019, pace: 0.62 },
+      { id: 'demo_line_serendib_tiktok', campaign_id: 'demo_camp_serendib', platform: 'tiktok' as PlatformType, name: 'Serendib | TikTok Traffic | EU', budget: 4200, primary_kpi: 'clicks' as KpiMetricType, primary_kpi_target: 18000, buying_kpi: 'cpc' as KpiMetricType, buying_kpi_target: 0.11, cpm: 4.1, ctr: 0.021, pace: 0.58 }
+    ];
+
+    const writes: Promise<any>[] = [];
+    const put = <T extends { id: string }>(collection: string, arr: T[], row: T) => {
+      const idx = arr.findIndex(x => x.id === row.id);
+      if (idx >= 0) arr[idx] = row; else arr.push(row);
+      writes.push(saveDoc(collection, row.id, row as any));
+    };
+
+    clients.forEach(c => put('clients', this.clients, { ...c, agency_id: agencyId, created_at: now, updated_at: now } as any));
+    brands.forEach(b => put('brands', this.brands, { ...b, agency_id: agencyId, created_at: now, updated_at: now } as any));
+
+    campaigns.forEach(c => {
+      const budget = lines.filter(l => l.campaign_id === c.id).reduce((s, l) => s + l.budget, 0);
+      put('campaigns', this.campaigns, {
+        id: c.id, agency_id: agencyId, client_id: c.client_id, brand_id: c.brand_id,
+        name: c.name, description: c.description, objective: c.objective,
+        start_date: flightStart, end_date: flightEnd,
+        total_budget: budget, currency: c.currency, status: 'active',
+        created_at: now, updated_at: now
+      } as any);
+    });
+
+    lines.forEach((l, li) => {
+      const camp = campaigns.find(c => c.id === l.campaign_id)!;
+      put('line_items', this.lineItems, {
+        id: l.id, agency_id: agencyId, campaign_id: l.campaign_id,
+        client_id: camp.client_id, brand_id: camp.brand_id,
+        platform: l.platform, platform_account_id: `act_demo_${li + 1}`,
+        platform_campaign_id: `demo_pc_${li + 1}`,
+        name: l.name, objective: camp.objective,
+        start_date: flightStart, end_date: flightEnd,
+        budget: l.budget, currency: camp.currency,
+        primary_kpi: l.primary_kpi, primary_kpi_target: l.primary_kpi_target,
+        buying_kpi: l.buying_kpi, buying_kpi_target: l.buying_kpi_target,
+        secondary_kpi_targets: {}, status: 'active', pacing_tolerance: 12,
+        created_at: now, updated_at: now
+      } as any);
+
+      put('line_item_data_sources', this.lineItemDataSources, {
+        id: `demo_ds_${li + 1}`, line_item_id: l.id, platform: l.platform,
+        platform_account_id: `act_demo_${li + 1}`, platform_account_name: `${camp.name} Ad Account`,
+        platform_campaign_id: `demo_pc_${li + 1}`, platform_campaign_name: l.name,
+        linked_at: now, status: 'active', created_at: now, updated_at: now
+      } as any);
+
+      // Daily delivery. Spend follows the line's flight budget at its pacing
+      // multiplier, with a weekday rhythm and a little day-to-day noise so the
+      // charts do not look drawn with a ruler.
+      const dailyBudget = (l.budget / (DAYS + 14)) * l.pace;
+      for (let d = DAYS; d >= 1; d--) {
+        const date = shift(-d);
+        const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
+        const weekend = dow === 0 || dow === 6 ? 0.82 : 1.06;
+        const wobble = 0.9 + ((li * 7 + d * 13) % 21) / 100;
+        const spend = Math.round(dailyBudget * weekend * wobble * 100) / 100;
+
+        const cpm = l.cpm * (0.94 + ((d * 3 + li) % 13) / 100);
+        const impressions = Math.round((spend / cpm) * 1000);
+        const clicks = Math.round(impressions * l.ctr);
+        const conversions = (l as any).cvr ? Math.round(clicks * (l as any).cvr) : Math.round(clicks * 0.012);
+        const orderValue = camp.currency === 'USD' ? 210 : 6400;
+
+        put('daily_metrics', this.dailyMetrics, {
+          id: `demo_metric_${l.id}_${date}`,
+          agency_id: agencyId, client_id: camp.client_id, brand_id: camp.brand_id,
+          campaign_id: l.campaign_id, line_item_id: l.id,
+          platform: l.platform, ad_account_id: `act_demo_${li + 1}`,
+          platform_campaign_id: `demo_pc_${li + 1}`, campaign_name: l.name,
+          report_date: date, currency: camp.currency,
+          spend,
+          impressions,
+          reach: Math.round(impressions * 0.78),
+          clicks,
+          conversions,
+          conversion_value: Math.round(conversions * orderValue),
+          video_views: l.primary_kpi === 'video_views' ? Math.round(impressions * 0.52) : Math.round(impressions * 0.18),
+          engagements: Math.round(clicks * 2.4),
+          campaign_status: 'ACTIVE', objective: camp.objective,
+          created_at: now
+        } as any);
+      }
+    });
+
+    for (let i = 0; i < writes.length; i += 100) {
+      await Promise.all(writes.slice(i, i + 100));
+    }
+
+    campaigns.forEach(c => this.recalculateCampaignBudget(c.id));
+
+    const counts = {
+      clients: clients.length,
+      brands: brands.length,
+      campaigns: campaigns.length,
+      line_items: lines.length,
+      data_sources: lines.length,
+      daily_metrics: lines.length * DAYS
+    };
+    console.log(`[Firestore Database] Demo dataset seeded for ${agencyId}:`, counts);
+    return counts;
+  }
+
+  /**
+   * Removes exactly what seedDemoDataset created, by id prefix, leaving real
+   * records untouched. Alerts raised against demo line items go too, otherwise
+   * the alert list keeps pointing at records that no longer exist.
+   */
+  async removeDemoDataset(agencyId: string): Promise<Record<string, number>> {
+    const isDemo = (id: string) => typeof id === 'string' && id.startsWith('demo_');
+    const counts: Record<string, number> = {};
+    const deletes: Promise<any>[] = [];
+
+    const purge = <T extends { id: string; agency_id?: string }>(
+      collection: string,
+      arr: T[],
+      keep: (rows: T[]) => void,
+      match: (row: T) => boolean
+    ) => {
+      const doomed = arr.filter(r => r.agency_id === agencyId && match(r));
+      counts[collection] = doomed.length;
+      doomed.forEach(r => deletes.push(deleteDocById(collection, r.id)));
+      keep(arr.filter(r => !(r.agency_id === agencyId && match(r))));
+    };
+
+    purge('daily_metrics', this.dailyMetrics, rows => { this.dailyMetrics = rows; }, r => isDemo(r.id));
+    purge('alerts', this.alerts, rows => { this.alerts = rows; }, r => isDemo((r as any).line_item_id || ''));
+    purge('line_items', this.lineItems, rows => { this.lineItems = rows; }, r => isDemo(r.id));
+    purge('campaigns', this.campaigns, rows => { this.campaigns = rows; }, r => isDemo(r.id));
+    purge('brands', this.brands, rows => { this.brands = rows; }, r => isDemo(r.id));
+    purge('clients', this.clients, rows => { this.clients = rows; }, r => isDemo(r.id));
+
+    // Data sources have no agency of their own; they belong to their line item.
+    const doomedDs = this.lineItemDataSources.filter(ds => isDemo(ds.id));
+    counts['line_item_data_sources'] = doomedDs.length;
+    doomedDs.forEach(ds => deletes.push(deleteDocById('line_item_data_sources', ds.id)));
+    this.lineItemDataSources = this.lineItemDataSources.filter(ds => !isDemo(ds.id));
+
+    for (let i = 0; i < deletes.length; i += 100) {
+      await Promise.all(deletes.slice(i, i + 100));
+    }
+
+    console.log(`[Firestore Database] Demo dataset removed for ${agencyId}:`, counts);
+    return counts;
   }
 
   getFirestoreStatus(agencyId?: string): {

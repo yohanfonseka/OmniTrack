@@ -1169,6 +1169,34 @@ async function startServer() {
   });
 
   /**
+   * Fills the signed-in agency with a demo dataset for showing the platform to
+   * someone: three clients, four campaigns across Meta, TikTok and Google, in
+   * two currencies, with thirty days of delivery ending yesterday.
+   *
+   * Every record is prefixed `demo_`, so DELETE takes exactly this data back
+   * out and leaves real records alone. Re-running overwrites in place rather
+   * than adding a second copy, and re-dates the set to the day it is run.
+   */
+  app.post('/api/system/demo-dataset', requireRole('super_user', 'agency_admin'), async (req, res) => {
+    try {
+      const counts = await db.seedDemoDataset(getAgencyId(req));
+      HealthEngine.syncAlertsForAgency(getAgencyId(req));
+      res.json({ success: true, seeded: counts });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to seed the demo dataset' });
+    }
+  });
+
+  app.delete('/api/system/demo-dataset', requireRole('super_user', 'agency_admin'), async (req, res) => {
+    try {
+      const counts = await db.removeDemoDataset(getAgencyId(req));
+      res.json({ success: true, removed: counts });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to remove the demo dataset' });
+    }
+  });
+
+  /**
    * Moves every record from one agency to another. A repair tool, not part of
    * normal operation: data created under one tenant is fetched but filtered out
    * of every response for an account belonging to another, which looks exactly
