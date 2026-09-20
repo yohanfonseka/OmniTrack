@@ -98,9 +98,14 @@ export const AgencySettingsView: React.FC = () => {
 
   useEffect(() => {
     if (!currentAgency) return;
-    ApiService.getUsers(currentAgency.id).then(setUsers).catch(console.error);
+    // Goes through the same loader the invite and remove flows use, so the two
+    // cannot drift: this effect used to fetch users directly, which left the
+    // client list for the client-viewer picker unloaded until something else
+    // happened to call reloadUsers.
+    reloadUsers();
     setBaseCurrency((currentAgency.base_currency || 'LKR').toUpperCase());
     setRates(currentAgency.exchange_rates || { USD: 305 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAgency]);
 
   useEffect(() => {
@@ -332,7 +337,9 @@ export const AgencySettingsView: React.FC = () => {
                   onChange={e => setInviteClientId(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-indigo-500 bg-white text-xs"
                 >
-                  <option value="">Which client may they see?</option>
+                  <option value="">
+                    {clients.length === 0 ? 'No clients yet - add one first' : 'Which client may they see?'}
+                  </option>
                   {clients.map(c => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
