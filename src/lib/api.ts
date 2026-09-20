@@ -384,6 +384,19 @@ export class ApiService {
     }, agencyId);
   }
 
+  static updateUser(agencyId: string, userId: string, data: {
+    name?: string;
+    email?: string;
+    password?: string;
+    role?: string;
+    client_id?: string;
+  }): Promise<User> {
+    return this.request<User>(`/api/users/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data)
+    }, agencyId);
+  }
+
   static deleteUser(agencyId: string, userId: string): Promise<{ success: boolean }> {
     return this.request<{ success: boolean }>(`/api/users/${userId}`, { method: 'DELETE' }, agencyId);
   }

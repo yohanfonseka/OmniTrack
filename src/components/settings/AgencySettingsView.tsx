@@ -14,7 +14,8 @@ import {
   Building2,
   Coins,
   Trash2,
-  Briefcase
+  Briefcase,
+  Pencil
 } from 'lucide-react';
 import { FormattedNumberInput } from '../common/FormattedNumberInput';
 import { ClientsBrandsView } from '../clients/ClientsBrandsView';
@@ -37,6 +38,16 @@ export const AgencySettingsView: React.FC = () => {
   const [invitePassword, setInvitePassword] = useState('');
   const [inviteRole, setInviteRole] = useState('agency_member');
   const [inviteClientId, setInviteClientId] = useState('');
+
+  // Inline edit of one existing account at a time.
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  const [editRole, setEditRole] = useState('agency_member');
+  const [editClientId, setEditClientId] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
+  const [isSavingUser, setIsSavingUser] = useState(false);
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [isInviting, setIsInviting] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
@@ -82,6 +93,45 @@ export const AgencySettingsView: React.FC = () => {
       setInviteError(err.message || 'Could not add the team member.');
     } finally {
       setIsInviting(false);
+    }
+  };
+
+  const openUserEditor = (user: User) => {
+    setEditingUser(user);
+    setEditName(user.name);
+    setEditEmail(user.email);
+    setEditPassword('');
+    setEditRole(user.role);
+    setEditClientId(user.client_id || '');
+    setEditError(null);
+  };
+
+  const handleSaveUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentAgency || !editingUser) return;
+    setEditError(null);
+    setIsSavingUser(true);
+    try {
+      await ApiService.updateUser(currentAgency.id, editingUser.id, {
+        name: editName.trim(),
+        email: editEmail.trim(),
+        // Only sent when set, so saving other fields does not reset the password.
+        ...(editPassword ? { password: editPassword } : {}),
+        role: editRole,
+        ...(editRole === 'client_viewer' ? { client_id: editClientId } : {})
+      });
+      setEditingUser(null);
+      reloadUsers();
+      setSavedNote(
+        editPassword
+          ? `${editEmail.trim()} updated. Their new password is active now.`
+          : `${editEmail.trim()} updated.`
+      );
+      setTimeout(() => setSavedNote(null), 4000);
+    } catch (err: any) {
+      setEditError(err.message || 'Could not update the user.');
+    } finally {
+      setIsSavingUser(false);
     }
   };
 
@@ -241,7 +291,8 @@ export const AgencySettingsView: React.FC = () => {
 
         <div className="divide-y divide-slate-100">
           {users.map(u => (
-            <div key={u.id} className="py-3 flex items-center justify-between">
+            <div key={u.id} className="py-3">
+              <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center font-bold text-xs">
                   {u.name.charAt(0)}
@@ -261,6 +312,16 @@ export const AgencySettingsView: React.FC = () => {
                 <span className="text-xs font-mono font-medium px-2.5 py-1 rounded bg-slate-100 text-slate-700 uppercase">
                   {u.role.replace(/_/g, ' ')}
                 </span>
+                {canManageUsers && (
+                  <button
+                    type="button"
+                    onClick={() => openUserEditor(u)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                    title={`Edit ${u.name}`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 {canManageUsers && u.id !== currentUser.id && (
                   <button
                     type="button"
@@ -272,6 +333,90 @@ export const AgencySettingsView: React.FC = () => {
                   </button>
                 )}
               </div>
+              </div>
+
+              {editingUser?.id === u.id && (
+                <form onSubmit={handleSaveUser} className="mt-3 p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    <input
+                      required
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      placeholder="Full name"
+                      className="px-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-indigo-500"
+                    />
+                    <input
+                      required
+                      type="email"
+                      value={editEmail}
+                      onChange={e => setEditEmail(e.target.value)}
+                      placeholder="Email address"
+                      className="px-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-indigo-500"
+                    />
+                    <input
+                      type="password"
+                      minLength={8}
+                      value={editPassword}
+                      onChange={e => setEditPassword(e.target.value)}
+                      placeholder="New password (leave blank to keep)"
+                      className="px-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-indigo-500 font-mono"
+                    />
+                    <select
+                      value={editRole}
+                      onChange={e => setEditRole(e.target.value)}
+                      disabled={u.id === currentUser.id}
+                      className="px-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-indigo-500 bg-white disabled:bg-slate-100 disabled:text-slate-400"
+                      title={u.id === currentUser.id ? 'You cannot change your own role' : undefined}
+                    >
+                      <option value="agency_member">Agency member</option>
+                      <option value="agency_admin">Agency admin</option>
+                      <option value="client_viewer">Client viewer</option>
+                      {currentUser.role === 'super_user' && <option value="super_user">Super user</option>}
+                    </select>
+                  </div>
+
+                  {editRole === 'client_viewer' && (
+                    <select
+                      required
+                      value={editClientId}
+                      onChange={e => setEditClientId(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-indigo-500 bg-white text-xs"
+                    >
+                      <option value="">
+                        {clients.length === 0 ? 'No clients yet - add one first' : 'Which client may they see?'}
+                      </option>
+                      {clients.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  )}
+
+                  {!u.auth_uid && (
+                    <p className="text-[11px] text-amber-700">
+                      This account has never signed in, so its email and password cannot be changed here.
+                    </p>
+                  )}
+
+                  {editError && <p className="text-[11px] text-rose-600 font-medium">{editError}</p>}
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="submit"
+                      disabled={isSavingUser}
+                      className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      {isSavingUser ? 'Saving...' : 'Save changes'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingUser(null)}
+                      className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-white"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           ))}
         </div>

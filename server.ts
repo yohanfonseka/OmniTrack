@@ -9,6 +9,7 @@ import {
   AuthedRequest,
   SESSION_COOKIE,
   createAccount,
+  updateAccount,
   hasBootstrappedAdmin,
   loginWithPassword,
   requireAuth,
@@ -238,6 +239,63 @@ async function startServer() {
       res.status(201).json(user);
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Could not create the user.' });
+    }
+  });
+
+  app.patch('/api/users/:id', requireRole('super_user', 'agency_admin'), async (req: AuthedRequest, res) => {
+    const target = db.getUserById(req.params.id);
+    // Same shape as the delete guard: an admin acts within their own agency, and
+    // a stranger's account is reported missing rather than forbidden.
+    if (!target || (target.agency_id && target.agency_id !== getAgencyId(req) && req.appUser?.role !== 'super_user')) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const { name, email, password, role, client_id } = req.body || {};
+
+    if (role && role !== target.role) {
+      if (role === 'super_user' && req.appUser?.role !== 'super_user') {
+        return res.status(403).json({ error: 'Only a super user can grant that role.' });
+      }
+      if (target.id === req.appUser?.id) {
+        return res.status(400).json({ error: 'You cannot change your own role.' });
+      }
+      if (target.role === 'super_user' && req.appUser?.role !== 'super_user') {
+        return res.status(403).json({ error: 'Only a super user can change a super user.' });
+      }
+    }
+
+    // A client viewer with no client sees nothing, so do not let an edit strand
+    // one the way the invite form used to.
+    const nextRole = role || target.role;
+    if (nextRole === 'client_viewer') {
+      const wanted = client_id !== undefined ? client_id : target.client_id;
+      if (!wanted || !db.getClientById(getAgencyId(req), String(wanted))) {
+        return res.status(400).json({ error: 'Choose which client this viewer may see.' });
+      }
+    }
+
+    try {
+      const updated = await updateAccount(req.params.id, {
+        name: name !== undefined ? String(name).trim() : undefined,
+        email: email !== undefined ? String(email) : undefined,
+        password: password ? String(password) : undefined,
+        role: role || undefined,
+        client_id: client_id !== undefined ? String(client_id) : undefined
+      });
+
+      db.addAuditLog({
+        agency_id: getAgencyId(req),
+        user_id: req.appUser?.id || 'system',
+        user_name: req.appUser?.name || 'System',
+        action: 'UPDATED_USER',
+        entity_type: 'user',
+        entity_id: updated.id,
+        details: `Updated ${updated.email}${password ? ' (password reset)' : ''}`
+      });
+
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Could not update the user.' });
     }
   });
 

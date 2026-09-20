@@ -237,6 +237,73 @@ export async function createAccount(params: {
   return user;
 }
 
+/**
+ * Changes an existing account's name, email, password or role.
+ *
+ * Email and password live in Firebase, the rest in our own user record, and the
+ * two must not drift: an address changed here but not there would leave the
+ * person signing in with the old one, and a record whose auth_uid no longer
+ * matches any identity cannot sign in at all. Firebase is updated first because
+ * it is the half that can reject the change - a duplicate address, a weak
+ * password - and our record is only written once it has accepted.
+ */
+export async function updateAccount(
+  userId: string,
+  changes: { name?: string; email?: string; password?: string; role?: UserRole; client_id?: string }
+): Promise<User> {
+  const user = db.users.find(u => u.id === userId);
+  if (!user) throw new Error('User not found.');
+
+  const email = changes.email?.trim().toLowerCase();
+  if (email !== undefined && !email) throw new Error('Email cannot be empty.');
+  if (changes.password !== undefined && changes.password.length < 8) {
+    throw new Error('Password must be at least 8 characters.');
+  }
+
+  if (email && email !== (user.email || '').toLowerCase()) {
+    const clash = db.users.find(u => u.id !== user.id && (u.email || '').toLowerCase() === email);
+    if (clash) throw new Error('Another account already uses that email address.');
+  }
+
+  const firebaseChanges: Record<string, any> = {};
+  if (email && email !== (user.email || '').toLowerCase()) firebaseChanges.email = email;
+  if (changes.password) firebaseChanges.password = changes.password;
+  if (changes.name && changes.name !== user.name) firebaseChanges.displayName = changes.name;
+
+  if (Object.keys(firebaseChanges).length > 0) {
+    if (!user.auth_uid) {
+      throw new Error('This account has no sign-in identity yet, so its email and password cannot be changed.');
+    }
+    try {
+      await getAuth().updateUser(user.auth_uid, firebaseChanges);
+    } catch (err: any) {
+      if (err?.code === 'auth/email-already-exists') {
+        throw new Error('Another account already uses that email address.');
+      }
+      throw new Error(err?.message || 'Could not update the sign-in details.');
+    }
+  }
+
+  const before = { ...user };
+  if (changes.name) user.name = changes.name;
+  if (email) user.email = email;
+  if (changes.role) user.role = changes.role;
+  if (changes.client_id !== undefined) {
+    if (changes.client_id) user.client_id = changes.client_id;
+    else delete user.client_id;
+  }
+
+  if (!(await db.persistUser(user))) {
+    // Firebase has already accepted the change, so leaving our record rolled
+    // back is the lesser evil: the two disagree either way, and this way the
+    // failure is reported rather than silently kept in memory until a restart.
+    Object.assign(user, before);
+    throw new Error('The change could not be saved, so it was rolled back. Firebase sign-in details may already have changed - try again.');
+  }
+
+  return user;
+}
+
 /** True once any account has been linked to a Firebase identity. */
 export function hasBootstrappedAdmin(): boolean {
   return db.users.some(u => !!u.auth_uid);
