@@ -241,6 +241,14 @@ export interface Alert {
   status: 'active' | 'acknowledged' | 'resolved';
   created_at: string;
   resolved_at?: string;
+  /**
+   * True when the sync closed this alert because its condition stopped holding,
+   * false when a person resolved it. The difference decides what happens next
+   * time the condition is seen: a recurrence after the problem genuinely went
+   * away raises a fresh alert, while a problem someone has already dismissed
+   * stays dismissed instead of reappearing on the next page load.
+   */
+  auto_resolved?: boolean;
 }
 
 export interface ImportJob {

@@ -1455,9 +1455,82 @@ class RelationalDatabase {
     alert.status = status;
     if (status === 'resolved') {
       alert.resolved_at = new Date().toISOString();
+      alert.auto_resolved = false;
+    } else {
+      delete alert.auto_resolved;
     }
     saveDoc('alerts', alert.id, alert).catch(err => console.error('[Firestore] updateAlertStatus error:', err));
     return alert;
+  }
+
+  /**
+   * Brings one line item's alerts into line with what is currently true of it.
+   *
+   * `desired` is the alert the line item warrants right now, or null when it
+   * warrants none. The rules this encodes:
+   *
+   *  - a condition that still holds updates the open alert rather than adding
+   *    another one;
+   *  - a condition that has stopped holding closes the open alert, marked as
+   *    closed by the system;
+   *  - a condition someone has already resolved by hand stays quiet while it
+   *    continues, instead of being raised again by the next sync - which is
+   *    what made resolving an alert appear to do nothing;
+   *  - a condition that returns after genuinely clearing raises a fresh alert.
+   */
+  reconcileAlert(
+    agencyId: string,
+    lineItemId: string,
+    desired: Omit<Alert, 'id' | 'created_at' | 'status'> | null
+  ): void {
+    const mine = this.alerts.filter(a => a.agency_id === agencyId && a.line_item_id === lineItemId);
+
+    if (!desired) {
+      mine
+        .filter(a => a.status !== 'resolved')
+        .forEach(a => {
+          a.status = 'resolved';
+          a.resolved_at = new Date().toISOString();
+          a.auto_resolved = true;
+          saveDoc('alerts', a.id, a).catch(() => {});
+        });
+      return;
+    }
+
+    // Anything open for this line item that is no longer the right alert has
+    // been superseded - an item cannot be both underspending and overspending.
+    mine
+      .filter(a => a.status !== 'resolved' && a.alert_type !== desired.alert_type)
+      .forEach(a => {
+        a.status = 'resolved';
+        a.resolved_at = new Date().toISOString();
+        a.auto_resolved = true;
+        saveDoc('alerts', a.id, a).catch(() => {});
+      });
+
+    const existing = mine
+      .filter(a => a.alert_type === desired.alert_type)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+
+    if (!existing) {
+      this.createAlert({ ...desired, status: 'active' } as any);
+      return;
+    }
+
+    if (existing.status === 'resolved') {
+      // Closed by the system means the problem had gone and is now back.
+      // Resolved by a person means they have seen it and it has not lapsed
+      // since, so leave it alone.
+      if (existing.auto_resolved) {
+        this.createAlert({ ...desired, status: 'active' } as any);
+      }
+      return;
+    }
+
+    existing.severity = desired.severity;
+    existing.title = desired.title;
+    existing.message = desired.message;
+    saveDoc('alerts', existing.id, existing).catch(() => {});
   }
 
   // ==================== IMPORTS ====================

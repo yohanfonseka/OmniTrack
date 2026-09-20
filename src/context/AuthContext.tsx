@@ -31,6 +31,7 @@ interface AuthContextType {
   clearDrillDown: () => void;
   activeAlertCount: number;
   setActiveAlertCount: (cnt: number) => void;
+  refreshAlertCount: () => void;
   unmappedCount: number;
   refreshUnmappedCount: () => Promise<void>;
   switchRole: (role: UserRole) => void;
@@ -49,8 +50,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [availableUsers, setAvailableUsers] = useState<User[]>([]);
   const [currentPortal, setCurrentPortal] = useState<'agency' | 'super_user' | 'client_viewer'>('agency');
   const [drillDown, setDrillDown] = useState<DrillDownState>({});
-  const [activeAlertCount, setActiveAlertCount] = useState<number>(2);
-  const [unmappedCount, setUnmappedCount] = useState<number>(3);
+  const [activeAlertCount, setActiveAlertCount] = useState<number>(0);
+  const [unmappedCount, setUnmappedCount] = useState<number>(0);
 
   const refreshUnmappedCount = useCallback(async () => {
     if (!currentAgency) return;
@@ -59,6 +60,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUnmappedCount(list.length);
     } catch (err) {
       console.error('Failed to load unmapped count', err);
+    }
+  }, [currentAgency]);
+
+  const refreshAlertCount = useCallback(async () => {
+    if (!currentAgency) return;
+    try {
+      const list = await ApiService.getAlerts(currentAgency.id, 'active');
+      setActiveAlertCount(list.length);
+    } catch (err) {
+      console.error('Failed to load alert count', err);
     }
   }, [currentAgency]);
 
@@ -97,12 +108,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (currentUser.role !== 'client_viewer') {
       refreshUsers();
       refreshUnmappedCount();
+      refreshAlertCount();
     }
-  }, [currentUser, refreshAgencies, refreshUsers, refreshUnmappedCount]);
+  }, [currentUser, refreshAgencies, refreshUsers, refreshUnmappedCount, refreshAlertCount]);
 
   useEffect(() => {
     const handleRefresh = () => {
       refreshUnmappedCount();
+      refreshAlertCount();
     };
     window.addEventListener('refresh-omnitrack', handleRefresh);
     window.addEventListener('campaigns-updated', handleRefresh);
@@ -110,13 +123,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       window.removeEventListener('refresh-omnitrack', handleRefresh);
       window.removeEventListener('campaigns-updated', handleRefresh);
     };
-  }, [refreshUnmappedCount]);
+  }, [refreshUnmappedCount, refreshAlertCount]);
 
   useEffect(() => {
     if (currentAgency) {
       refreshUnmappedCount();
+      refreshAlertCount();
     }
-  }, [currentAgency?.id, refreshUnmappedCount]);
+  }, [currentAgency?.id, refreshUnmappedCount, refreshAlertCount]);
 
   const loadSession = useCallback(async () => {
     try {
@@ -263,6 +277,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         clearDrillDown,
         activeAlertCount,
         setActiveAlertCount,
+        refreshAlertCount,
         unmappedCount,
         refreshUnmappedCount,
         switchRole,

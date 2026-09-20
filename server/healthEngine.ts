@@ -811,6 +811,15 @@ export class HealthEngine {
   /**
    * Syncs automated alerts based on current health status
    */
+  /**
+   * Brings every line item's alerts into line with its current health.
+   *
+   * This used to only ever create alerts. Nothing closed one when the problem
+   * went away, so the list only grew, and the duplicate check looked at active
+   * alerts alone, so resolving one simply had it raised again by the next read
+   * of /api/alerts - which happens every time the alerts page loads. Deciding
+   * what each line item warrants and reconciling against that handles both.
+   */
   static syncAlertsForAgency(agencyId: string) {
     const campaigns = db.getCampaigns(agencyId);
     campaigns.forEach(campaign => {
@@ -818,38 +827,39 @@ export class HealthEngine {
       lineItems.forEach(line => {
         const daily = db.getDailyMetrics(agencyId, line.id);
         if (daily.length === 0) {
-          // Do not generate alerts for newly created line items awaiting performance data
+          // A line item awaiting its first delivery is not a problem to report.
           return;
         }
+
         const metrics = this.calculateLineItemMetrics(agencyId, line, daily);
+        const base = {
+          agency_id: agencyId,
+          client_id: line.client_id,
+          brand_id: line.brand_id,
+          campaign_id: line.campaign_id,
+          line_item_id: line.id,
+          platform: line.platform
+        };
+
         if (metrics.health === 'red') {
-          db.createAlert({
-            agency_id: agencyId,
-            client_id: line.client_id,
-            brand_id: line.brand_id,
-            campaign_id: line.campaign_id,
-            line_item_id: line.id,
-            platform: line.platform,
+          db.reconcileAlert(agencyId, line.id, {
+            ...base,
             alert_type: metrics.pacing_percentage < 70 ? 'underspending' : 'cpm_above_target',
             severity: 'red',
             title: `Critical: ${line.name} requires attention`,
-            message: metrics.health_reasons.join('; '),
-            status: 'active'
-          });
+            message: metrics.health_reasons.join('; ')
+          } as any);
         } else if (metrics.health === 'amber') {
-          db.createAlert({
-            agency_id: agencyId,
-            client_id: line.client_id,
-            brand_id: line.brand_id,
-            campaign_id: line.campaign_id,
-            line_item_id: line.id,
-            platform: line.platform,
+          db.reconcileAlert(agencyId, line.id, {
+            ...base,
             alert_type: metrics.pacing_percentage > 115 ? 'overspending' : 'cpm_above_target',
             severity: 'amber',
             title: `Warning: ${line.name} off target`,
-            message: metrics.health_reasons.join('; '),
-            status: 'active'
-          });
+            message: metrics.health_reasons.join('; ')
+          } as any);
+        } else {
+          // Healthy again: close whatever was open for it.
+          db.reconcileAlert(agencyId, line.id, null);
         }
       });
     });

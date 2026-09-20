@@ -20,7 +20,7 @@ interface AlertsViewProps {
 }
 
 export const AlertsView: React.FC<AlertsViewProps> = ({ onSelectCampaign }) => {
-  const { currentAgency, setActiveAlertCount } = useAuth();
+  const { currentAgency, setActiveAlertCount, refreshAlertCount } = useAuth();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('active');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
@@ -51,9 +51,15 @@ export const AlertsView: React.FC<AlertsViewProps> = ({ onSelectCampaign }) => {
     if (!currentAgency) return;
     try {
       await ApiService.updateAlertStatus(currentAgency.id, alertId, nextStatus);
-      setAlerts(prev =>
-        prev.map(a => (a.id === alertId ? { ...a, status: nextStatus } : a))
-      );
+      const next = alerts.map(a => (a.id === alertId ? { ...a, status: nextStatus } : a));
+      setAlerts(next);
+
+      // The badge was only ever recalculated inside loadAlerts, so resolving an
+      // alert changed the row in front of you and left the counter alone until
+      // something happened to reload the page. Counting from the server rather
+      // than from `next` keeps it right when the list is filtered, since a
+      // filtered list does not hold every active alert.
+      refreshAlertCount();
     } catch (err) {
       console.error('Failed to update alert', err);
     }
