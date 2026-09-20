@@ -25,9 +25,15 @@ import {
 
 interface ClientsBrandsViewProps {
   onSelectCampaign?: (campaignId: string, clientId?: string, brandId?: string) => void;
+  /**
+   * Whether the viewer may change the account structure. The server refuses
+   * these writes from anyone but an admin; this keeps the buttons off screen so
+   * nobody is offered a control that would only fail.
+   */
+  canManage?: boolean;
 }
 
-export const ClientsBrandsView: React.FC<ClientsBrandsViewProps> = ({ onSelectCampaign }) => {
+export const ClientsBrandsView: React.FC<ClientsBrandsViewProps> = ({ onSelectCampaign, canManage = false }) => {
   const { currentAgency } = useAuth();
 
   const [clients, setClients] = useState<Client[]>([]);
@@ -416,6 +422,7 @@ export const ClientsBrandsView: React.FC<ClientsBrandsViewProps> = ({ onSelectCa
           </p>
         </div>
 
+        {canManage && (
         <button
           id="btn-add-new-client"
           onClick={handleOpenNewClientModal}
@@ -424,6 +431,7 @@ export const ClientsBrandsView: React.FC<ClientsBrandsViewProps> = ({ onSelectCa
           <PlusCircle className="w-4 h-4" />
           <span>New Client</span>
         </button>
+        )}
       </div>
 
       {/* 2-Column Split: Client Picker & Brand Details */}
@@ -525,6 +533,7 @@ export const ClientsBrandsView: React.FC<ClientsBrandsViewProps> = ({ onSelectCa
                 </div>
 
                 {/* Client Action Buttons: Edit Client, Delete Client, Add Brand */}
+                {canManage && (
                 <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
                   <button
                     id="btn-edit-active-client"
@@ -554,6 +563,7 @@ export const ClientsBrandsView: React.FC<ClientsBrandsViewProps> = ({ onSelectCa
                     <span>Add Brand</span>
                   </button>
                 </div>
+                )}
               </div>
 
               {/* Brands Grid */}
@@ -570,7 +580,11 @@ export const ClientsBrandsView: React.FC<ClientsBrandsViewProps> = ({ onSelectCa
                 {clientBrands.length === 0 ? (
                   <div className="p-8 border border-dashed border-slate-200 rounded-xl text-center text-slate-400 text-xs bg-slate-50/50">
                     <p className="font-medium text-slate-600">No brands created for {activeClient.name} yet.</p>
-                    <p className="mt-1">Click "Add Brand" above to register the first product line or brand entity.</p>
+                    <p className="mt-1">
+                      {canManage
+                        ? 'Click "Add Brand" above to register the first product line or brand entity.'
+                        : 'An agency admin can add brands for this client.'}
+                    </p>
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -597,6 +611,7 @@ export const ClientsBrandsView: React.FC<ClientsBrandsViewProps> = ({ onSelectCa
                             </div>
 
                             {/* Brand Actions: Edit & Delete */}
+                            {canManage && (
                             <div className="flex items-center gap-1.5 shrink-0">
                               <button
                                 id={`btn-edit-brand-${brand.id}`}
@@ -617,6 +632,7 @@ export const ClientsBrandsView: React.FC<ClientsBrandsViewProps> = ({ onSelectCa
                                 <Trash2 className="w-3 h-3" />
                               </button>
                             </div>
+                            )}
                           </div>
 
                           {/* Campaigns under brand */}

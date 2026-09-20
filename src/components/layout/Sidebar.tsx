@@ -34,7 +34,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
 
   const agencyNavItems: NavItem[] = [
     { id: 'dashboard', label: 'Command Dashboard', icon: LayoutDashboard },
-    { id: 'clients', label: 'Clients & Brands', icon: Briefcase },
     { id: 'campaigns', label: 'Campaigns', icon: Users },
     {
       id: 'unmapped',

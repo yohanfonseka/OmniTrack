@@ -260,7 +260,8 @@ async function startServer() {
     res.json(scope ? clients.filter(c => c.id === scope) : clients);
   });
 
-  app.post('/api/clients', (req, res) => {
+  // Account structure is an admin concern, not day-to-day campaign work.
+  app.post('/api/clients', requireRole('super_user', 'agency_admin'), (req, res) => {
     const agencyId = getAgencyId(req);
     const { name, industry, currency, contact_person, contact_email } = req.body;
     if (!name || !name.trim()) {
@@ -297,7 +298,7 @@ async function startServer() {
     res.status(201).json(client);
   });
 
-  app.patch('/api/clients/:id', (req, res) => {
+  app.patch('/api/clients/:id', requireRole('super_user', 'agency_admin'), (req, res) => {
     const agencyId = getAgencyId(req);
     const { name, industry, currency, contact_person, contact_email } = req.body;
 
@@ -342,7 +343,7 @@ async function startServer() {
     res.json(updated);
   });
 
-  app.delete('/api/clients/:id', (req, res) => {
+  app.delete('/api/clients/:id', requireRole('super_user', 'agency_admin'), (req, res) => {
     const agencyId = getAgencyId(req);
     const existing = db.getClientById(agencyId, req.params.id);
     const clientName = existing?.name || req.params.id;
@@ -370,7 +371,7 @@ async function startServer() {
     res.json(db.getBrands(agencyId, clientId));
   });
 
-  app.post('/api/brands', (req, res) => {
+  app.post('/api/brands', requireRole('super_user', 'agency_admin'), (req, res) => {
     const agencyId = getAgencyId(req);
     const { client_id, name, description, default_currency, default_kpi_targets } = req.body;
     if (!client_id || !name || !name.trim()) {
@@ -408,7 +409,7 @@ async function startServer() {
     res.status(201).json(brand);
   });
 
-  app.patch('/api/brands/:id', (req, res) => {
+  app.patch('/api/brands/:id', requireRole('super_user', 'agency_admin'), (req, res) => {
     const agencyId = getAgencyId(req);
     const currentBrand = db.getBrandById(agencyId, req.params.id);
     if (!currentBrand) return res.status(404).json({ error: 'Brand not found.' });
@@ -450,7 +451,7 @@ async function startServer() {
     res.json(updated);
   });
 
-  app.delete('/api/brands/:id', (req, res) => {
+  app.delete('/api/brands/:id', requireRole('super_user', 'agency_admin'), (req, res) => {
     const agencyId = getAgencyId(req);
     const existing = db.getBrandById(agencyId, req.params.id);
     const brandName = existing?.name || req.params.id;

@@ -4,7 +4,6 @@ import { Navbar } from './components/layout/Navbar';
 import { Sidebar } from './components/layout/Sidebar';
 import { DrillDownContainer } from './components/dashboard/DrillDownContainer';
 import { CampaignsListView } from './components/campaigns/CampaignsListView';
-import { ClientsBrandsView } from './components/clients/ClientsBrandsView';
 import { AlertsView } from './components/alerts/AlertsView';
 import { UnmappedCampaignsView } from './components/unmapped/UnmappedCampaignsView';
 import { CsvImportWizard } from './components/imports/CsvImportWizard';
@@ -76,10 +75,6 @@ const AppContent: React.FC = () => {
                   onNavigateToImports={() => setActiveTab('imports')}
                   onNavigateToCampaigns={() => setActiveTab('campaigns')}
                 />
-              )}
-
-              {activeTab === 'clients' && (
-                <ClientsBrandsView onSelectCampaign={handleSelectCampaignDrillDown} />
               )}
 
               {activeTab === 'alerts' && (

@@ -13,9 +13,11 @@ import {
   Mail,
   Building2,
   Coins,
-  Trash2
+  Trash2,
+  Briefcase
 } from 'lucide-react';
 import { FormattedNumberInput } from '../common/FormattedNumberInput';
+import { ClientsBrandsView } from '../clients/ClientsBrandsView';
 
 const SUPPORTED_CURRENCIES = ['LKR', 'USD', 'EUR', 'GBP', 'AUD', 'INR', 'SGD'];
 
@@ -44,6 +46,10 @@ export const AgencySettingsView: React.FC = () => {
   const [testingToolsEnabled, setTestingToolsEnabled] = useState(false);
 
   const canManageUsers = currentUser.role === 'super_user' || currentUser.role === 'agency_admin';
+
+  // Client and brand records live here now rather than in their own nav item:
+  // creating them shapes the agency's account structure and is an admin job.
+  const [section, setSection] = useState<'agency' | 'clients'>('agency');
 
   const reloadUsers = () => {
     if (!currentAgency) return;
@@ -138,14 +144,42 @@ export const AgencySettingsView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className={`space-y-6 ${section === 'clients' ? '' : 'max-w-4xl'}`}>
       {/* Header */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs">
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs space-y-4">
         <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
           <Settings className="w-5 h-5 text-indigo-600" />
           Agency Configuration & Operations
         </h2>
+
+        <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-xs font-semibold w-fit">
+          <button
+            type="button"
+            onClick={() => setSection('agency')}
+            className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+              section === 'agency' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span>Settings</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSection('clients')}
+            className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+              section === 'clients' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Briefcase className="w-3.5 h-3.5" />
+            <span>Clients &amp; Brands</span>
+          </button>
+        </div>
       </div>
+
+      {section === 'clients' && <ClientsBrandsView canManage={canManageUsers} />}
+
+      {section === 'agency' && (
+      <>
 
       {savedNote && (
         <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
@@ -500,6 +534,8 @@ export const AgencySettingsView: React.FC = () => {
           )}
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 };
