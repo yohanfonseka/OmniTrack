@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LineItemCalculatedMetrics, CampaignLineItem } from '../../types';
 import { ApiService } from '../../lib/api';
 import { HealthBadge } from '../common/HealthBadge';
@@ -49,6 +49,14 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
   const [showDailyTable, setShowDailyTable] = useState(false);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const [rollbackFeedback, setRollbackFeedback] = useState<string | null>(null);
+
+  // Only GET /api/line-items/:id returns the daily rows; the campaign payload
+  // that renders this component inside the drill-down does not carry them, so
+  // the trend chart was empty there however much delivery existed. Fetched on
+  // demand rather than widened into the campaign response, which would carry
+  // every line item's full history on every dashboard load.
+  const [fetchedDaily, setFetchedDaily] = useState<any[] | null>(null);
+  const [loadingDaily, setLoadingDaily] = useState(false);
 
   const { line_item } = metrics;
   const isConnected = metrics.data_source_status === 'connected';
@@ -111,9 +119,26 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
     }
   };
 
+  const providedDaily = metrics.daily_metrics;
+
+  useEffect(() => {
+    if (providedDaily && providedDaily.length > 0) return;
+
+    let cancelled = false;
+    setLoadingDaily(true);
+    ApiService.getLineItemDetails(line_item.agency_id, line_item.id)
+      .then(full => { if (!cancelled) setFetchedDaily(full.daily_metrics || []); })
+      .catch(() => { if (!cancelled) setFetchedDaily([]); })
+      .finally(() => { if (!cancelled) setLoadingDaily(false); });
+
+    return () => { cancelled = true; };
+  }, [line_item.agency_id, line_item.id, providedDaily]);
+
+  const sourceDaily = (providedDaily && providedDaily.length > 0) ? providedDaily : (fetchedDaily || []);
+
   // Generate chart data from daily metrics or synthesize daily trend
-  const dailyData = (metrics.daily_metrics && metrics.daily_metrics.length > 0)
-    ? metrics.daily_metrics.map(m => ({
+  const dailyData = (sourceDaily.length > 0)
+    ? sourceDaily.map(m => ({
         date: m.report_date.slice(5), // MM-DD
         spend: m.spend,
         impressions: m.impressions,
@@ -433,11 +458,15 @@ export const LineItemDetails: React.FC<LineItemDetailsProps> = ({
       ) : (
         <div className="p-4 bg-slate-50 border border-slate-200/70 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-500">
           <div className="flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-slate-400 shrink-0" />
-            <span>No daily delivery recorded for this line item yet. Import a platform report to populate this chart.</span>
+            <TrendingUp className={`w-4 h-4 text-slate-400 shrink-0 ${loadingDaily ? 'animate-pulse' : ''}`} />
+            <span>
+              {loadingDaily
+                ? 'Loading daily delivery...'
+                : 'No daily delivery recorded for this line item yet. Import a platform report to populate this chart.'}
+            </span>
           </div>
           <span className="font-mono text-[11px] font-semibold text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200 shrink-0">
-            0 reporting days
+            {loadingDaily ? '—' : '0 reporting days'}
           </span>
         </div>
       )}
