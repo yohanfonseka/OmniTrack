@@ -140,6 +140,20 @@ export function requireRole(...roles: UserRole[]) {
 }
 
 /**
+ * The client a request is confined to, or undefined when it is not confined.
+ *
+ * A client viewer is pinned to their own client and nothing else. When the
+ * account carries no client the scope becomes a value nothing matches, so the
+ * account sees nothing rather than everything - a missing field must not widen
+ * access.
+ */
+export function clientScopeOf(req: AuthedRequest): string | undefined {
+  const user = req.appUser;
+  if (user?.role !== 'client_viewer') return undefined;
+  return user.client_id || '__no_client_assigned__';
+}
+
+/**
  * The agency a request may act on. Taken from the signed-in user, never from a
  * client-supplied header; only a super user may act on another agency.
  */

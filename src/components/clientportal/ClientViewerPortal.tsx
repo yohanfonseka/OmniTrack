@@ -23,8 +23,10 @@ export const ClientViewerPortal: React.FC = () => {
   useEffect(() => {
     if (!currentAgency) return;
     setLoading(true);
-    // Client viewer is restricted to client_abc
-    ApiService.getCampaigns(currentAgency.id, currentUser.client_id || 'client_abc')
+    // No fallback client: an account with none assigned must see nothing, not
+    // somebody else's campaigns. The server pins the scope regardless of what
+    // is sent here.
+    ApiService.getCampaigns(currentAgency.id, currentUser.client_id)
       .then(list => {
         setCampaigns(list);
         if (list.length > 0) setSelectedCampaignId(list[0].campaign.id);
@@ -51,7 +53,7 @@ export const ClientViewerPortal: React.FC = () => {
 
         <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
           <Clock className="w-3.5 h-3.5 text-slate-400" />
-          <span>Real-time delivery & pacing figures updated today</span>
+          <span>Delivery and pacing as at the latest imported report</span>
         </div>
       </div>
 
@@ -81,15 +83,18 @@ export const ClientViewerPortal: React.FC = () => {
         </div>
       ) : activeCampaign ? (
         <div className="space-y-6">
-          <CampaignOverview campaignMetrics={activeCampaign} />
+          <CampaignOverview campaignMetrics={activeCampaign} readOnly />
           <PlatformBreakdown
             platforms={activeCampaign.platforms}
             currency={activeCampaign.campaign.currency}
+            readOnly
           />
         </div>
       ) : (
         <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-400">
-          No campaigns found for this client account.
+          {currentUser.client_id
+            ? 'No campaigns are running for your account yet.'
+            : 'This account is not linked to a client yet. Ask your agency to assign one.'}
         </div>
       )}
     </div>

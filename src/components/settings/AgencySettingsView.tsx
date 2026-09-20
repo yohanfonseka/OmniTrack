@@ -34,6 +34,8 @@ export const AgencySettingsView: React.FC = () => {
   const [inviteEmail, setInviteEmail] = useState('');
   const [invitePassword, setInvitePassword] = useState('');
   const [inviteRole, setInviteRole] = useState('agency_member');
+  const [inviteClientId, setInviteClientId] = useState('');
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [isInviting, setIsInviting] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
 
@@ -46,6 +48,7 @@ export const AgencySettingsView: React.FC = () => {
   const reloadUsers = () => {
     if (!currentAgency) return;
     ApiService.getUsers(currentAgency.id).then(setUsers).catch(console.error);
+    ApiService.getClients(currentAgency.id).then(setClients).catch(console.error);
   };
 
   const handleInvite = async (e: React.FormEvent) => {
@@ -58,12 +61,14 @@ export const AgencySettingsView: React.FC = () => {
         name: inviteName.trim(),
         email: inviteEmail.trim(),
         password: invitePassword,
-        role: inviteRole
+        role: inviteRole,
+        client_id: inviteRole === 'client_viewer' ? inviteClientId : undefined
       });
       setInviteName('');
       setInviteEmail('');
       setInvitePassword('');
       setInviteRole('agency_member');
+      setInviteClientId('');
       reloadUsers();
       setSavedNote(`${inviteEmail.trim()} can now sign in to ${currentAgency.name}.`);
       setTimeout(() => setSavedNote(null), 4000);
@@ -284,6 +289,26 @@ export const AgencySettingsView: React.FC = () => {
                 {currentUser.role === 'super_user' && <option value="super_user">Super user</option>}
               </select>
             </div>
+
+            {inviteRole === 'client_viewer' && (
+              <div className="space-y-1">
+                <select
+                  required
+                  value={inviteClientId}
+                  onChange={e => setInviteClientId(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-indigo-500 bg-white text-xs"
+                >
+                  <option value="">Which client may they see?</option>
+                  {clients.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-500">
+                  A client viewer signs in to a read-only dashboard showing only this client's
+                  campaigns. They cannot edit anything, and cannot see your other clients.
+                </p>
+              </div>
+            )}
 
             <button
               type="submit"

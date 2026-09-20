@@ -14,6 +14,7 @@ import {
   requireAuth,
   requireRole,
   resolveAgencyId,
+  clientScopeOf,
   sessionCookieOptions
 } from './server/auth.js';
 
@@ -120,9 +121,51 @@ async function startServer() {
   // Everything past this point requires a verified session.
   app.use('/api', requireAuth);
 
+  /**
+   * A client viewer may read one client's performance and do nothing else.
+   *
+   * Enforced here rather than route by route, for two reasons. Every write is
+   * refused by method, so no mutating route can forget to guard itself. And
+   * reads are an allowlist rather than a blocklist, so a route added later is
+   * closed to client accounts until someone decides otherwise - the failure
+   * mode of forgetting is a client seeing too little, not too much.
+   *
+   * Until this existed the read-only badge in the client portal was decoration:
+   * the server accepted deletes, imports and cross-client reads from these
+   * accounts exactly as it would from an agency admin.
+   */
+  const CLIENT_VIEWER_READS: RegExp[] = [
+    /^\/auth\/me$/,
+    /^\/agencies$/,
+    /^\/clients$/,
+    /^\/brands$/,
+    /^\/campaigns$/,
+    /^\/campaigns\/[^/]+$/,
+    /^\/line-items$/,
+    /^\/line-items\/[^/]+$/
+  ];
+
+  app.use('/api', (req: AuthedRequest, res, next) => {
+    if (req.appUser?.role !== 'client_viewer') return next();
+
+    if (req.method !== 'GET') {
+      return res.status(403).json({ error: 'Your access to this dashboard is read-only.' });
+    }
+    if (!CLIENT_VIEWER_READS.some(rx => rx.test(req.path))) {
+      return res.status(403).json({ error: 'Not available to client accounts.' });
+    }
+
+    // The client comes from the account, never from the request, so editing the
+    // query string cannot reach another client's campaigns.
+    req.query.client_id = clientScopeOf(req);
+    next();
+  });
+
   // ==================== AGENCIES (Super User Portal) ====================
-  app.get('/api/agencies', (req, res) => {
-    res.json(db.getAgencies());
+  app.get('/api/agencies', (req: AuthedRequest, res) => {
+    // Only the platform owner has any business seeing other agencies.
+    if (req.appUser?.role === 'super_user') return res.json(db.getAgencies());
+    res.json(db.getAgencies().filter(a => a.id === req.appUser?.agency_id));
   });
 
   app.post('/api/agencies', (req, res) => {
@@ -173,6 +216,15 @@ async function startServer() {
       return res.status(403).json({ error: 'Only a super user can create another super user.' });
     }
 
+    // A client viewer's entire access is defined by its client. Without one the
+    // account can see nothing, so refuse rather than create a dead login.
+    if (requestedRole === 'client_viewer') {
+      const target = client_id ? db.getClientById(getAgencyId(req), String(client_id)) : undefined;
+      if (!target) {
+        return res.status(400).json({ error: 'Choose which client this viewer may see.' });
+      }
+    }
+
     try {
       const user = await createAccount({
         email: String(email || ''),
@@ -203,7 +255,9 @@ async function startServer() {
   // ==================== CLIENTS ====================
   app.get('/api/clients', (req, res) => {
     const agencyId = getAgencyId(req);
-    res.json(db.getClients(agencyId));
+    const scope = clientScopeOf(req as AuthedRequest);
+    const clients = db.getClients(agencyId);
+    res.json(scope ? clients.filter(c => c.id === scope) : clients);
   });
 
   app.post('/api/clients', (req, res) => {
@@ -312,7 +366,7 @@ async function startServer() {
   // ==================== BRANDS ====================
   app.get('/api/brands', (req, res) => {
     const agencyId = getAgencyId(req);
-    const clientId = req.query.client_id as string;
+    const clientId = (clientScopeOf(req as AuthedRequest) || req.query.client_id) as string;
     res.json(db.getBrands(agencyId, clientId));
   });
 
@@ -433,6 +487,10 @@ async function startServer() {
     const agencyId = getAgencyId(req);
     const campaign = db.getCampaignById(agencyId, req.params.id);
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+    // Not 403: a client account should not be able to probe which campaign ids
+    // exist under other clients.
+    const scope = clientScopeOf(req as AuthedRequest);
+    if (scope && campaign.client_id !== scope) return res.status(404).json({ error: 'Campaign not found' });
     const metrics = HealthEngine.calculateCampaignMetrics(agencyId, campaign);
     res.json(metrics);
   });
@@ -528,7 +586,10 @@ async function startServer() {
   app.get('/api/line-items', (req, res) => {
     const agencyId = getAgencyId(req);
     const campaignId = req.query.campaign_id as string;
-    const items = db.getLineItems(agencyId, campaignId);
+    // This route filters by campaign, not by client, so without this a client
+    // account asking for no campaign would receive every line item in the agency.
+    const scope = clientScopeOf(req as AuthedRequest);
+    const items = db.getLineItems(agencyId, campaignId).filter(l => !scope || l.client_id === scope);
     const calculated = items.map(l => HealthEngine.calculateLineItemMetrics(agencyId, l));
     res.json(calculated);
   });
@@ -537,6 +598,8 @@ async function startServer() {
     const agencyId = getAgencyId(req);
     const item = db.getLineItemById(agencyId, req.params.id);
     if (!item) return res.status(404).json({ error: 'Line item not found' });
+    const scope = clientScopeOf(req as AuthedRequest);
+    if (scope && item.client_id !== scope) return res.status(404).json({ error: 'Line item not found' });
     const metrics = HealthEngine.calculateLineItemMetrics(agencyId, item);
     const daily = db.getDailyMetrics(agencyId, item.id);
     res.json({ ...metrics, daily_metrics: daily });

@@ -39,6 +39,8 @@ interface CampaignOverviewProps {
   onViewAllLineItems?: () => void;
   onCampaignUpdated?: (campaign: Campaign) => void;
   onCampaignDeleted?: () => void;
+  /** Hides every control that changes something. Used by the client portal. */
+  readOnly?: boolean;
 }
 
 export const CampaignOverview: React.FC<CampaignOverviewProps> = ({
@@ -46,7 +48,8 @@ export const CampaignOverview: React.FC<CampaignOverviewProps> = ({
   onDrillDownPlatform,
   onViewAllLineItems,
   onCampaignUpdated,
-  onCampaignDeleted
+  onCampaignDeleted,
+  readOnly = false
 }) => {
   const { currentAgency } = useAuth();
   const [showEditModal, setShowEditModal] = useState(false);
@@ -160,7 +163,7 @@ export const CampaignOverview: React.FC<CampaignOverviewProps> = ({
               <span>Updated: {campaignMetrics.last_successful_update}</span>
             </div>
 
-            {isSpecificCampaign && (
+            {isSpecificCampaign && !readOnly && (
               <div className="flex items-center gap-2 pl-1 sm:border-l sm:border-slate-200 sm:ml-1">
                 {campaignMetrics.total_spend > 0 && (
                   <button

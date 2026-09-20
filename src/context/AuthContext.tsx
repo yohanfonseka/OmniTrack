@@ -92,8 +92,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // that can only come back 401.
     if (!currentUser) return;
     refreshAgencies();
-    refreshUsers();
-    refreshUnmappedCount();
+    // A client account is refused both of these by the server, and rightly so:
+    // the agency's user list and unmapped import queue are none of its business.
+    if (currentUser.role !== 'client_viewer') {
+      refreshUsers();
+      refreshUnmappedCount();
+    }
   }, [currentUser, refreshAgencies, refreshUsers, refreshUnmappedCount]);
 
   useEffect(() => {

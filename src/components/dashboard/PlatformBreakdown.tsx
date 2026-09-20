@@ -32,6 +32,8 @@ interface PlatformBreakdownProps {
   onSelectLineItem?: (lineItemId: string) => void;
   onConnectDataSource?: (lineItem: CampaignLineItem) => void;
   onOpenCreateLineItem?: () => void;
+  /** Hides every control that changes something. Used by the client portal. */
+  readOnly?: boolean;
 }
 
 export const PlatformBreakdown: React.FC<PlatformBreakdownProps> = ({
@@ -42,7 +44,8 @@ export const PlatformBreakdown: React.FC<PlatformBreakdownProps> = ({
   onSelectPlatform,
   onSelectLineItem,
   onConnectDataSource,
-  onOpenCreateLineItem
+  onOpenCreateLineItem,
+  readOnly = false
 }) => {
   const { currentAgency } = useAuth();
   const [lineItemToEdit, setLineItemToEdit] = useState<CampaignLineItem | null>(null);
@@ -88,7 +91,7 @@ export const PlatformBreakdown: React.FC<PlatformBreakdownProps> = ({
           <h3 className="text-sm font-bold text-slate-900 tracking-tight uppercase">Platform Breakdown (Level 2)</h3>
         </div>
         <div className="flex items-center gap-2">
-          {onOpenCreateLineItem && (
+          {!readOnly && onOpenCreateLineItem && (
             <button
               onClick={onOpenCreateLineItem}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-all shadow-xs cursor-pointer"
@@ -113,7 +116,7 @@ export const PlatformBreakdown: React.FC<PlatformBreakdownProps> = ({
                 Add a line item to this campaign to start tracking platform budget, pacing, and delivery metrics. Newly created line items start with clean zero values.
               </p>
             </div>
-            {onOpenCreateLineItem && (
+            {!readOnly && onOpenCreateLineItem && (
               <button
                 onClick={onOpenCreateLineItem}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all shadow-xs"
@@ -365,6 +368,8 @@ export const PlatformBreakdown: React.FC<PlatformBreakdownProps> = ({
                                 </td>
                                 <td className="py-3 px-4 text-right">
                                   <div className="flex items-center justify-end gap-1.5">
+                                    {!readOnly && (
+                                    <>
                                     <button
                                       type="button"
                                       id={`edit-line-item-btn-${item.line_item.id}`}
@@ -389,7 +394,9 @@ export const PlatformBreakdown: React.FC<PlatformBreakdownProps> = ({
                                     >
                                       <Trash2 className="w-3.5 h-3.5" />
                                     </button>
-                                    {!isConnected && onConnectDataSource && (
+                                    </>
+                                    )}
+                                    {!readOnly && !isConnected && onConnectDataSource && (
                                       <button
                                         onClick={e => {
                                           e.stopPropagation();
@@ -421,9 +428,9 @@ export const PlatformBreakdown: React.FC<PlatformBreakdownProps> = ({
                                     <LineItemDetails
                                       metrics={item}
                                       onClose={() => toggleLineItem(item.line_item.id)}
-                                      onConnectDataSource={onConnectDataSource}
-                                      onEditLineItem={li => setLineItemToEdit(li)}
-                                      onDeleteLineItem={li => setLineItemToDelete(li)}
+                                      onConnectDataSource={readOnly ? undefined : onConnectDataSource}
+                                      onEditLineItem={readOnly ? undefined : li => setLineItemToEdit(li)}
+                                      onDeleteLineItem={readOnly ? undefined : li => setLineItemToDelete(li)}
                                     />
                                   </td>
                                 </tr>
