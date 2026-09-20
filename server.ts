@@ -1221,11 +1221,15 @@ async function startServer() {
     }
   });
 
-  // Seeds demo records into shared state; same opt-in and platform owner only.
-  app.post('/api/system/seed-demo-data', requireRole('super_user'), async (req, res) => {
+  // Kept for the existing Settings button. It used to run a second, older
+  // seeder that wrote only to memory with dates hardcoded to last August, so
+  // whatever it produced was already stale and gone by the next restart. It now
+  // builds the same dataset as /api/system/demo-dataset.
+  app.post('/api/system/seed-demo-data', requireRole('super_user', 'agency_admin'), async (req, res) => {
     try {
-      db.seedDemoClientsAndCampaigns();
-      res.json({ success: true, message: 'Demo clients, brands, campaigns and line items re-seeded.' });
+      const seeded = await db.seedDemoDataset(getAgencyId(req));
+      HealthEngine.syncAlertsForAgency(getAgencyId(req));
+      res.json({ success: true, message: 'Demo clients, brands, campaigns and delivery re-seeded.', seeded });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to seed demo data' });
     }
