@@ -1295,6 +1295,20 @@ async function startServer() {
   });
 
   /**
+   * Replaces every identifying name in this agency with an invented one, for
+   * showing a real account to other people. Pass { dry_run: true } to see what
+   * would change without changing it. This cannot be undone.
+   */
+  app.post('/api/system/anonymise-names', requireRole('super_user', 'agency_admin'), async (req, res) => {
+    try {
+      const result = await db.anonymiseNames(getAgencyId(req), req.body?.dry_run === true);
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Could not rename the records' });
+    }
+  });
+
+  /**
    * Fills the signed-in agency with a demo dataset for showing the platform to
    * someone: three clients, four campaigns across Meta, TikTok and Google, in
    * two currencies, with thirty days of delivery ending yesterday.

@@ -2249,25 +2249,28 @@ class RelationalDatabase {
     const flightStart = shift(-DAYS);
     const flightEnd = shift(14);
 
+    // Invented companies, brands and people. Nothing here should resolve to a
+    // real business: this dataset gets shown to prospects, and borrowing a
+    // genuine advertiser's name implies a client relationship that is not real.
     const clients = [
-      { id: 'demo_client_fonterra', name: 'Fonterra Brands Lanka', industry: 'FMCG & Dairy', currency: 'LKR', contact_person: 'Dilani Jayawardena', contact_email: 'dilani@fonterra.lk' },
-      { id: 'demo_client_singer', name: 'Singer Sri Lanka', industry: 'Consumer Electronics & Retail', currency: 'LKR', contact_person: 'Roshan Silva', contact_email: 'roshan@singer.lk' },
-      { id: 'demo_client_serendib', name: 'Serendib Resorts', industry: 'Travel & Hospitality', currency: 'USD', contact_person: 'Ayesha Fernando', contact_email: 'ayesha@serendibresorts.com' }
+      { id: 'demo_client_fonterra', name: 'Verdabel Foods', industry: 'FMCG & Dairy', currency: 'LKR', contact_person: 'Priya Delgoda', contact_email: 'priya@verdabelfoods.example' },
+      { id: 'demo_client_singer', name: 'Halcyon Home', industry: 'Consumer Electronics & Retail', currency: 'LKR', contact_person: 'Marcus Tenne', contact_email: 'marcus@halcyonhome.example' },
+      { id: 'demo_client_serendib', name: 'Azure Bay Retreats', industry: 'Travel & Hospitality', currency: 'USD', contact_person: 'Nadia Orwell', contact_email: 'nadia@azurebayretreats.example' }
     ];
 
     const brands = [
-      { id: 'demo_brand_ratthi', client_id: 'demo_client_fonterra', name: 'Ratthi', description: 'Everyday milk powder', default_currency: 'LKR' },
-      { id: 'demo_brand_anchor', client_id: 'demo_client_fonterra', name: 'Anchor Newdale', description: 'Yoghurt and dairy snacks', default_currency: 'LKR' },
-      { id: 'demo_brand_singer_home', client_id: 'demo_client_singer', name: 'Singer Home Appliances', description: 'Kitchen and home range', default_currency: 'LKR' },
-      { id: 'demo_brand_serendib', client_id: 'demo_client_serendib', name: 'Serendib Beach Collection', description: 'Coastal resort portfolio', default_currency: 'USD' }
+      { id: 'demo_brand_ratthi', client_id: 'demo_client_fonterra', name: 'Mornbrew', description: 'Everyday milk powder', default_currency: 'LKR' },
+      { id: 'demo_brand_anchor', client_id: 'demo_client_fonterra', name: 'Snowfield', description: 'Yoghurt and dairy snacks', default_currency: 'LKR' },
+      { id: 'demo_brand_singer_home', client_id: 'demo_client_singer', name: 'Halcyon Kitchen', description: 'Kitchen and home range', default_currency: 'LKR' },
+      { id: 'demo_brand_serendib', client_id: 'demo_client_serendib', name: 'Azure Bay Collection', description: 'Coastal resort portfolio', default_currency: 'USD' }
     ];
 
     // health: how this campaign should read on the dashboard.
     const campaigns = [
-      { id: 'demo_camp_ratthi', client_id: 'demo_client_fonterra', brand_id: 'demo_brand_ratthi', name: 'Ratthi Sachet Launch', description: 'Launch burst for the 20g sachet', objective: 'Reach', currency: 'LKR', health: 'good' },
-      { id: 'demo_camp_newdale', client_id: 'demo_client_fonterra', brand_id: 'demo_brand_anchor', name: 'Newdale Always On', description: 'Always-on yoghurt awareness', objective: 'Video Views', currency: 'LKR', health: 'overspending' },
-      { id: 'demo_camp_singer', client_id: 'demo_client_singer', brand_id: 'demo_brand_singer_home', name: 'Singer Avurudu Offers', description: 'Seasonal appliance promotion', objective: 'Conversions', currency: 'LKR', health: 'good' },
-      { id: 'demo_camp_serendib', client_id: 'demo_client_serendib', brand_id: 'demo_brand_serendib', name: 'Serendib Winter Escapes', description: 'European winter season drive', objective: 'Conversions', currency: 'USD', health: 'underdelivering' }
+      { id: 'demo_camp_ratthi', client_id: 'demo_client_fonterra', brand_id: 'demo_brand_ratthi', name: 'Mornbrew Sachet Launch', description: 'Launch burst for the 20g sachet', objective: 'Reach', currency: 'LKR', health: 'good' },
+      { id: 'demo_camp_newdale', client_id: 'demo_client_fonterra', brand_id: 'demo_brand_anchor', name: 'Snowfield Always On', description: 'Always-on yoghurt awareness', objective: 'Video Views', currency: 'LKR', health: 'overspending' },
+      { id: 'demo_camp_singer', client_id: 'demo_client_singer', brand_id: 'demo_brand_singer_home', name: 'Halcyon Season Offers', description: 'Seasonal appliance promotion', objective: 'Conversions', currency: 'LKR', health: 'good' },
+      { id: 'demo_camp_serendib', client_id: 'demo_client_serendib', brand_id: 'demo_brand_serendib', name: 'Azure Bay Winter Escapes', description: 'European winter season drive', objective: 'Conversions', currency: 'USD', health: 'underdelivering' }
     ];
 
     // Each line item is one platform buy inside a campaign. KPI targets are
@@ -2275,14 +2278,14 @@ class RelationalDatabase {
     // the flight, so an on-track line reads on-track rather than failing a
     // number picked out of the air.
     const lines = [
-      { id: 'demo_line_ratthi_meta', campaign_id: 'demo_camp_ratthi', platform: 'meta' as PlatformType, name: 'Ratthi | Meta Reach | Sachet', budget: 850000, primary_kpi: 'reach' as KpiMetricType, primary_kpi_target: 2138000, buying_kpi: 'cpm' as KpiMetricType, buying_kpi_target: 320, cpm: 310, ctr: 0.0135, pace: 1.0 },
-      { id: 'demo_line_ratthi_tiktok', campaign_id: 'demo_camp_ratthi', platform: 'tiktok' as PlatformType, name: 'Ratthi | TikTok Video | Sachet', budget: 520000, primary_kpi: 'video_views' as KpiMetricType, primary_kpi_target: 1099000, buying_kpi: 'cpv' as KpiMetricType, buying_kpi_target: 0.22, cpm: 240, ctr: 0.009, pace: 0.97 },
-      { id: 'demo_line_newdale_meta', campaign_id: 'demo_camp_newdale', platform: 'meta' as PlatformType, name: 'Newdale | Meta Video | Always On', budget: 600000, primary_kpi: 'video_views' as KpiMetricType, primary_kpi_target: 1272000, buying_kpi: 'cpv' as KpiMetricType, buying_kpi_target: 0.35, cpm: 355, ctr: 0.011, pace: 1.38 },
-      { id: 'demo_line_newdale_google', campaign_id: 'demo_camp_newdale', platform: 'google' as PlatformType, name: 'Newdale | YouTube Bumper', budget: 380000, primary_kpi: 'impressions' as KpiMetricType, primary_kpi_target: 1565000, buying_kpi: 'cpm' as KpiMetricType, buying_kpi_target: 290, cpm: 335, ctr: 0.006, pace: 1.31 },
-      { id: 'demo_line_singer_meta', campaign_id: 'demo_camp_singer', platform: 'meta' as PlatformType, name: 'Singer | Meta Conversions | Avurudu', budget: 1250000, primary_kpi: 'conversions' as KpiMetricType, primary_kpi_target: 2360, buying_kpi: 'cpa' as KpiMetricType, buying_kpi_target: 520, cpm: 405, ctr: 0.021, cvr: 0.038, pace: 1.03 },
-      { id: 'demo_line_singer_google', campaign_id: 'demo_camp_singer', platform: 'google' as PlatformType, name: 'Singer | Search | Appliances', budget: 700000, primary_kpi: 'conversions' as KpiMetricType, primary_kpi_target: 2620, buying_kpi: 'cpa' as KpiMetricType, buying_kpi_target: 470, cpm: 620, ctr: 0.048, cvr: 0.055, pace: 0.99 },
-      { id: 'demo_line_serendib_meta', campaign_id: 'demo_camp_serendib', platform: 'meta' as PlatformType, name: 'Serendib | Meta Conversions | EU', budget: 9500, primary_kpi: 'conversions' as KpiMetricType, primary_kpi_target: 340, buying_kpi: 'cpa' as KpiMetricType, buying_kpi_target: 29, cpm: 7.4, ctr: 0.016, cvr: 0.019, pace: 0.62 },
-      { id: 'demo_line_serendib_tiktok', campaign_id: 'demo_camp_serendib', platform: 'tiktok' as PlatformType, name: 'Serendib | TikTok Traffic | EU', budget: 4200, primary_kpi: 'clicks' as KpiMetricType, primary_kpi_target: 18000, buying_kpi: 'cpc' as KpiMetricType, buying_kpi_target: 0.11, cpm: 4.1, ctr: 0.021, pace: 0.58 }
+      { id: 'demo_line_ratthi_meta', campaign_id: 'demo_camp_ratthi', platform: 'meta' as PlatformType, name: 'Mornbrew | Meta Reach | Sachet', budget: 850000, primary_kpi: 'reach' as KpiMetricType, primary_kpi_target: 2138000, buying_kpi: 'cpm' as KpiMetricType, buying_kpi_target: 320, cpm: 310, ctr: 0.0135, pace: 1.0 },
+      { id: 'demo_line_ratthi_tiktok', campaign_id: 'demo_camp_ratthi', platform: 'tiktok' as PlatformType, name: 'Mornbrew | TikTok Video | Sachet', budget: 520000, primary_kpi: 'video_views' as KpiMetricType, primary_kpi_target: 1099000, buying_kpi: 'cpv' as KpiMetricType, buying_kpi_target: 0.22, cpm: 240, ctr: 0.009, pace: 0.97 },
+      { id: 'demo_line_newdale_meta', campaign_id: 'demo_camp_newdale', platform: 'meta' as PlatformType, name: 'Snowfield | Meta Video | Always On', budget: 600000, primary_kpi: 'video_views' as KpiMetricType, primary_kpi_target: 1272000, buying_kpi: 'cpv' as KpiMetricType, buying_kpi_target: 0.35, cpm: 355, ctr: 0.011, pace: 1.38 },
+      { id: 'demo_line_newdale_google', campaign_id: 'demo_camp_newdale', platform: 'google' as PlatformType, name: 'Snowfield | YouTube Bumper', budget: 380000, primary_kpi: 'impressions' as KpiMetricType, primary_kpi_target: 1565000, buying_kpi: 'cpm' as KpiMetricType, buying_kpi_target: 290, cpm: 335, ctr: 0.006, pace: 1.31 },
+      { id: 'demo_line_singer_meta', campaign_id: 'demo_camp_singer', platform: 'meta' as PlatformType, name: 'Halcyon | Meta Conversions | Season', budget: 1250000, primary_kpi: 'conversions' as KpiMetricType, primary_kpi_target: 2360, buying_kpi: 'cpa' as KpiMetricType, buying_kpi_target: 520, cpm: 405, ctr: 0.021, cvr: 0.038, pace: 1.03 },
+      { id: 'demo_line_singer_google', campaign_id: 'demo_camp_singer', platform: 'google' as PlatformType, name: 'Halcyon | Search | Appliances', budget: 700000, primary_kpi: 'conversions' as KpiMetricType, primary_kpi_target: 2620, buying_kpi: 'cpa' as KpiMetricType, buying_kpi_target: 470, cpm: 620, ctr: 0.048, cvr: 0.055, pace: 0.99 },
+      { id: 'demo_line_serendib_meta', campaign_id: 'demo_camp_serendib', platform: 'meta' as PlatformType, name: 'Azure Bay | Meta Conversions | EU', budget: 9500, primary_kpi: 'conversions' as KpiMetricType, primary_kpi_target: 340, buying_kpi: 'cpa' as KpiMetricType, buying_kpi_target: 29, cpm: 7.4, ctr: 0.016, cvr: 0.019, pace: 0.62 },
+      { id: 'demo_line_serendib_tiktok', campaign_id: 'demo_camp_serendib', platform: 'tiktok' as PlatformType, name: 'Azure Bay | TikTok Traffic | EU', budget: 4200, primary_kpi: 'clicks' as KpiMetricType, primary_kpi_target: 18000, buying_kpi: 'cpc' as KpiMetricType, buying_kpi_target: 0.11, cpm: 4.1, ctr: 0.021, pace: 0.58 }
     ];
 
     const writes: Promise<any>[] = [];
@@ -2426,6 +2429,175 @@ class RelationalDatabase {
 
     console.log(`[Firestore Database] Demo dataset removed for ${agencyId}:`, counts);
     return counts;
+  }
+
+  /**
+   * Replaces every name in an agency that could identify a real business with
+   * an invented one, so the account can be shown to other people.
+   *
+   * Renaming the client and brand rows by hand is not enough: the real name
+   * also sits on campaigns, on line items, on anything still in the unmapped
+   * queue, on the data source labels, and on the campaign_name copied onto
+   * every daily metric row at import. Any one of those left behind puts the
+   * name back on screen.
+   *
+   * Ids are deliberately left alone. platform_campaign_id is what matches a
+   * future import to its line item, and rewriting it would quietly break that.
+   * The ad account ids stay with them for the same reason.
+   *
+   * This cannot be undone - the original names are overwritten, not stored.
+   */
+  async anonymiseNames(agencyId: string, dryRun = false): Promise<{
+    dry_run: boolean;
+    clients: { from: string; to: string }[];
+    brands: { from: string; to: string }[];
+    campaigns: number;
+    line_items: number;
+    unmapped_campaigns: number;
+    data_sources: number;
+    daily_metric_rows: number;
+  }> {
+    const COMPANIES = [
+      'Verdabel Foods', 'Halcyon Home', 'Azure Bay Retreats', 'Larkfield Motors',
+      'Cobalt & Pine', 'Marrowgate Retail', 'Tessellate Health', 'Juniper Lane Group',
+      'Vantage Orchard', 'Pellory Logistics', 'Ridgeway Mutual', 'Fernwick Studios'
+    ];
+    const BRANDS = [
+      'Mornbrew', 'Snowfield', 'Kettlewick', 'Lumeo', 'Brightfen', 'Tanglewood',
+      'Orrery', 'Pipfall', 'Quillon', 'Saltmarsh', 'Hollowdene', 'Westreach'
+    ];
+    const PEOPLE = [
+      'Priya Delgoda', 'Marcus Tenne', 'Nadia Orwell', 'Samir Veight',
+      'Lena Hardcastle', 'Theo Brannigan', 'Imani Ferrow', 'Oscar Lindqvist',
+      'Rosa Calderon', 'Felix Amery', 'Yuki Tanaka-Bell', 'Dev Rampersad'
+    ];
+    // .example is reserved by the IETF and can never belong to anyone.
+    const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '') + '.example';
+
+    const writes: Promise<any>[] = [];
+    const save = (collection: string, row: any) => {
+      if (!dryRun) writes.push(saveDoc(collection, row.id, row));
+    };
+
+    const clientMap = new Map<string, string>();
+    const clientsChanged: { from: string; to: string }[] = [];
+
+    this.clients
+      .filter(c => c.agency_id === agencyId)
+      .forEach((c, i) => {
+        const next = COMPANIES[i % COMPANIES.length] + (i >= COMPANIES.length ? ` ${Math.floor(i / COMPANIES.length) + 1}` : '');
+        const person = PEOPLE[i % PEOPLE.length];
+        clientsChanged.push({ from: c.name, to: next });
+        clientMap.set(c.id, next);
+        if (!dryRun) {
+          c.name = next;
+          c.contact_person = person;
+          c.contact_email = `${person.split(' ')[0].toLowerCase()}@${slug(next)}`;
+          c.updated_at = new Date().toISOString();
+          save('clients', c);
+        }
+      });
+
+    const brandMap = new Map<string, string>();
+    const brandsChanged: { from: string; to: string }[] = [];
+
+    this.brands
+      .filter(b => b.agency_id === agencyId)
+      .forEach((b, i) => {
+        const next = BRANDS[i % BRANDS.length] + (i >= BRANDS.length ? ` ${Math.floor(i / BRANDS.length) + 1}` : '');
+        brandsChanged.push({ from: b.name, to: next });
+        brandMap.set(b.id, next);
+        if (!dryRun) {
+          b.name = next;
+          b.description = 'Product line';
+          b.updated_at = new Date().toISOString();
+          save('brands', b);
+        }
+      });
+
+    // Campaign and line item names are rebuilt from the new brand plus the
+    // parts that carry meaning for a demo - the objective, the platform - so
+    // the dashboard still reads as a real account rather than as placeholders.
+    const used = new Map<string, number>();
+    const unique = (base: string) => {
+      const n = (used.get(base) || 0) + 1;
+      used.set(base, n);
+      return n === 1 ? base : `${base} ${n}`;
+    };
+
+    const campaignNames = new Map<string, string>();
+    const campaigns = this.campaigns.filter(c => c.agency_id === agencyId);
+    campaigns.forEach(c => {
+      const brand = brandMap.get(c.brand_id) || clientMap.get(c.client_id) || 'Campaign';
+      const next = unique(`${brand} ${c.objective || 'Campaign'}`);
+      campaignNames.set(c.id, next);
+      if (!dryRun) {
+        c.name = next;
+        c.description = 'Demonstration campaign';
+        c.updated_at = new Date().toISOString();
+        save('campaigns', c);
+      }
+    });
+
+    const lineNames = new Map<string, string>();
+    const lines = this.lineItems.filter(l => l.agency_id === agencyId);
+    lines.forEach(l => {
+      const brand = brandMap.get(l.brand_id) || clientMap.get(l.client_id) || 'Line item';
+      const next = unique(`${brand} | ${String(l.platform).toUpperCase()}`);
+      lineNames.set(l.id, next);
+      if (!dryRun) {
+        l.name = next;
+        l.updated_at = new Date().toISOString();
+        save('line_items', l);
+      }
+    });
+
+    const unmapped = this.unmappedCampaigns.filter(u => u.agency_id === agencyId);
+    unmapped.forEach((u, i) => {
+      if (!dryRun) {
+        u.platform_campaign_name = `Unmapped ${String(u.platform).toUpperCase()} campaign ${i + 1}`;
+        save('unmapped_campaigns', u);
+      }
+    });
+
+    const agencyLineIds = new Set(lines.map(l => l.id));
+    const sources = this.lineItemDataSources.filter(ds => agencyLineIds.has(ds.line_item_id));
+    sources.forEach(ds => {
+      if (!dryRun) {
+        const line = lines.find(l => l.id === ds.line_item_id);
+        ds.platform_campaign_name = lineNames.get(ds.line_item_id) || 'Platform campaign';
+        ds.platform_account_name = line ? `${clientMap.get(line.client_id) || 'Client'} Ad Account` : 'Ad Account';
+        ds.updated_at = new Date().toISOString();
+        save('line_item_data_sources', ds);
+      }
+    });
+
+    // The import copies the platform's campaign name onto every row it writes,
+    // so the old name survives here long after the line item is renamed.
+    const metrics = this.dailyMetrics.filter(m => m.agency_id === agencyId);
+    metrics.forEach(m => {
+      if (!dryRun) {
+        m.campaign_name = lineNames.get(m.line_item_id) || 'Platform campaign';
+        save('daily_metrics', m);
+      }
+    });
+
+    for (let i = 0; i < writes.length; i += 200) {
+      await Promise.all(writes.slice(i, i + 200));
+    }
+
+    const result = {
+      dry_run: dryRun,
+      clients: clientsChanged,
+      brands: brandsChanged,
+      campaigns: campaigns.length,
+      line_items: lines.length,
+      unmapped_campaigns: unmapped.length,
+      data_sources: sources.length,
+      daily_metric_rows: metrics.length
+    };
+    console.log(`[Firestore Database] Anonymise${dryRun ? ' (dry run)' : ''} for ${agencyId}:`, result);
+    return result;
   }
 
   getFirestoreStatus(agencyId?: string): {
