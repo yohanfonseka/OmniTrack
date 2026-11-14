@@ -1,8 +1,8 @@
 import type { CategoryId } from './categories';
 
 export type Role = 'creator' | 'brand';
-export type Platform = 'instagram' | 'tiktok';
-export const PLATFORMS: Platform[] = ['instagram', 'tiktok'];
+export type Platform = 'instagram' | 'tiktok' | 'youtube';
+export const PLATFORMS: Platform[] = ['instagram', 'tiktok', 'youtube'];
 
 /** Headline numbers anyone can see on a creator's verified link. */
 export interface PublicStats {

@@ -24,7 +24,7 @@ export const CATEGORIES = [
 
 export type CategoryId = (typeof CATEGORIES)[number]['id'];
 
-export const MAX_CATEGORIES = 3;
+export const MAX_CATEGORIES = 5;
 
 const IDS = new Set<string>(CATEGORIES.map((c) => c.id));
 
