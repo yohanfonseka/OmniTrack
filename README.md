@@ -2,6 +2,8 @@
 
 Multi-tenant digital agency campaign monitoring platform with drill-down pacing, health engine, and multi-platform analytics.
 
+> **CreatorTrack** (creatortrack.lk), the creator marketplace, is a separate app in [`apps/creators/`](apps/creators/README.md) with its own users, database and Cloud Run service.
+
 ## Architecture
 
 - **Frontend**: Vite + React SPA (`src/`), calling the API under `/api/*`.

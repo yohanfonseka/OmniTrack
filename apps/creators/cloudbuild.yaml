@@ -1,0 +1,35 @@
+# Builds apps/creators and deploys it as its own Cloud Run service,
+# separate from the OmniTrack agency app (service "omnitrack-app").
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    dir: apps/creators
+    args: ['build', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA', '.']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA']
+
+  # State lives in Firestore, so the service can scale to zero and run more
+  # than one instance. Secrets come from Secret Manager (see README).
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - run
+      - deploy
+      - '${_SERVICE}'
+      - '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--min-instances=0'
+      - '--max-instances=3'
+      - '--timeout=3600'
+      - '--allow-unauthenticated'
+
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA'
+
+substitutions:
+  _REGION: asia-southeast1
+  _REPOSITORY: omnitrack
+  _SERVICE: creatortrack
+
+options:
+  logging: CLOUD_LOGGING_ONLY

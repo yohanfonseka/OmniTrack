@@ -18,6 +18,18 @@ const fmt = (n: number | null | undefined) => {
   return String(Math.round(n));
 };
 
+const REGION = new Intl.DisplayNames(['en'], { type: 'region' });
+const countryName = (code: string) => {
+  if (!/^[A-Z]{2}$/.test(code)) return code;
+  const short: Record<string, string> = { AE: 'UAE', GB: 'UK', US: 'USA' };
+  if (short[code]) return short[code];
+  try {
+    return REGION.of(code) ?? code;
+  } catch {
+    return code;
+  }
+};
+
 const date = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
 
 export interface PdfOptions {
@@ -67,6 +79,7 @@ export function renderPdf(opts: PdfOptions): Promise<Buffer> {
     doc.fillColor(MUTED).font('Helvetica').fontSize(8).text(label.toUpperCase(), x + 10, top + 9);
     doc.fillColor(INK).font('Helvetica-Bold').fontSize(15).text(value, x + 10, top + 22);
   });
+  doc.x = 48;
   doc.y = top + 62;
 
   for (const report of opts.reports) {
@@ -80,6 +93,7 @@ export function renderPdf(opts: PdfOptions): Promise<Buffer> {
   const range = doc.bufferedPageRange();
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
+    doc.page.margins.bottom = 0; // allow writing in the footer area without starting a new page
     const y = doc.page.height - 36;
     doc.fillColor(MUTED).font('Helvetica').fontSize(7.5);
     const left = opts.stamp ? latin1(opts.stamp) : 'Stats pulled directly from each platform via its official API.';
@@ -97,10 +111,14 @@ function heading(doc: PDFKit.PDFDocument, text: string) {
 
 function section(doc: PDFKit.PDFDocument, W: number, r: FullReport, account: CreatorCard['accounts'][number]) {
   const s = account.stats;
-  doc.moveDown(0.6);
-  doc.fillColor(ACCENT).font('Helvetica-Bold').fontSize(15).text(`${PLATFORM_LABELS[r.platform]}  `, { continued: true })
-    .fillColor(MUTED).font('Helvetica').fontSize(10).text(`@${latin1(account.username)}${account.demo ? '  (demo data)' : ''}`);
-  doc.fillColor(MUTED).fontSize(8.5).text(`Verified ${date(account.lastVerifiedAt)}${account.status === 'needs_reconnect' ? ' (connection needs renewing)' : ''}`);
+  const y0 = doc.y + 10;
+  doc.fillColor(ACCENT).font('Helvetica-Bold').fontSize(15).text(PLATFORM_LABELS[r.platform], 48, y0, { lineBreak: false });
+  const labelW = doc.widthOfString(PLATFORM_LABELS[r.platform]);
+  doc.fillColor(MUTED).font('Helvetica').fontSize(10)
+    .text(`@${latin1(account.username)}${account.demo ? '  (demo data)' : ''}`, 48 + labelW + 8, y0 + 4, { lineBreak: false });
+  doc.fillColor(MUTED).fontSize(8.5)
+    .text(`Verified ${date(account.lastVerifiedAt)}${account.status === 'needs_reconnect' ? ' (connection needs renewing)' : ''}`, 48, y0 + 20);
+  doc.x = 48;
 
   const rows: [string, string][] = [
     [r.platform === 'youtube' ? 'Subscribers' : 'Followers', fmt(s?.followers)],
@@ -152,10 +170,10 @@ function section(doc: PDFKit.PDFDocument, W: number, r: FullReport, account: Cre
         doc.fillColor(MUTED).font('Helvetica-Bold').fontSize(8).text(g.toUpperCase(), x, y);
         y += 13;
         for (const [label, pct] of Object.entries(d[g]!).slice(0, 6)) {
-          doc.fillColor(INK).font('Helvetica').fontSize(8).text(latin1(label), x, y, { width: colW * 0.45, lineBreak: false });
-          const bw = (colW * 0.35) * (pct / 100);
+          doc.fillColor(INK).font('Helvetica').fontSize(8).text(latin1(g === 'country' ? countryName(label) : label), x, y, { width: colW * 0.45 - 4, height: 10, ellipsis: true, lineBreak: false });
+          const bw = (colW * 0.28) * (pct / 100);
           doc.rect(x + colW * 0.45, y + 1.5, Math.max(bw, 1), 6).fillColor('#c4b5fd').fill();
-          doc.fillColor(MUTED).text(`${pct}%`, x + colW * 0.45 + colW * 0.36, y, { lineBreak: false });
+          doc.fillColor(MUTED).text(`${pct}%`, x + colW * 0.76, y, { lineBreak: false });
           y += 12;
         }
         maxY = Math.max(maxY, y);
@@ -173,9 +191,10 @@ function section(doc: PDFKit.PDFDocument, W: number, r: FullReport, account: Cre
     if (doc.y > doc.page.height - 170) doc.addPage();
     heading(doc, 'Top recent posts');
     const cols = [0, 0.5, 0.64, 0.76, 0.88].map((f) => 48 + f * W);
+    const hy = doc.y;
     doc.fillColor(MUTED).font('Helvetica-Bold').fontSize(7.5);
-    ['POST', 'DATE', 'LIKES', 'COMMENTS', 'VIEWS'].forEach((t, i) => doc.text(t, cols[i], doc.y, { lineBreak: false }));
-    doc.moveDown(0.9);
+    ['POST', 'DATE', 'LIKES', 'COMMENTS', 'VIEWS'].forEach((t, i) => doc.text(t, cols[i], hy, { lineBreak: false }));
+    doc.y = hy + 14;
     for (const p of posts) {
       const y = doc.y;
       doc.fillColor(INK).font('Helvetica').fontSize(8)
