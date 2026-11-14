@@ -3,6 +3,11 @@ import type { CategoryId } from './categories';
 export type Role = 'creator' | 'brand';
 export type Platform = 'instagram' | 'tiktok' | 'youtube';
 export const PLATFORMS: Platform[] = ['instagram', 'tiktok', 'youtube'];
+export const PLATFORM_LABELS: Record<Platform, string> = {
+  instagram: 'Instagram',
+  tiktok: 'TikTok',
+  youtube: 'YouTube',
+};
 
 /** Headline numbers anyone can see on a creator's verified link. */
 export interface PublicStats {
@@ -28,12 +33,16 @@ export interface PublicAccount {
   demo: boolean;
 }
 
+/** A post's format, used for the format comparison on the dashboard. */
+export type PostFormat = 'reel' | 'photo' | 'carousel' | 'video' | 'short' | 'long_video';
+
 export interface PostSummary {
   id: string;
   caption: string;
   url: string;
   thumbnailUrl: string | null;
   postedAt: string;
+  format: PostFormat;
   likes: number;
   comments: number;
   views: number | null;
@@ -49,17 +58,26 @@ export interface Demographics {
 }
 
 export interface HistoryPoint {
-  date: string;
+  date: string; // YYYY-MM-DD
   followers: number;
-  engagementRate: number;
+  engagementRate: number | null;
 }
 
-/** The paid part of a profile: what a brand unlocks with a report. */
+/** YouTube-only channel metrics over the last 28 days. */
+export interface YouTubeExtras {
+  totalViews: number;
+  views28d: number;
+  watchMinutes28d: number;
+  avgViewDurationSec: number;
+}
+
+/** The full data for one platform: what a verified brand (and the creator) sees. */
 export interface FullReport {
   platform: Platform;
   recentPosts: PostSummary[];
   demographics: Demographics | null;
   history: HistoryPoint[];
+  youtube: YouTubeExtras | null;
 }
 
 export interface CreatorCard {
@@ -71,48 +89,16 @@ export interface CreatorCard {
   country: string;
   city: string;
   totalFollowers: number;
+  communityBuilder: boolean;
   accounts: PublicAccount[];
 }
 
+export type ProfileAccess = 'owner' | 'full' | 'locked_visitor' | 'locked_unverified' | 'locked_creator';
+
 export interface CreatorProfilePage extends CreatorCard {
-  /** Present when the viewer is the creator or has unlocked the report. */
+  /** Present only when access is 'owner' or 'full'. */
   reports: FullReport[] | null;
-  access: 'owner' | 'unlocked' | 'locked';
-  unlockExpiresAt: string | null;
-  reportPrice: { amountCents: number; currency: string; accessDays: number };
-}
-
-export type CampaignStatus = 'open' | 'closed';
-export type MemberStatus = 'invited' | 'applied' | 'accepted' | 'declined' | 'rejected';
-
-export interface Campaign {
-  id: string;
-  brandId: string;
-  brandName: string;
-  title: string;
-  brief: string;
-  deliverables: string;
-  categories: CategoryId[];
-  platforms: Platform[];
-  /** Fee offered per creator, in whole currency units. */
-  budgetPerCreator: number | null;
-  currency: string;
-  deadline: string | null;
-  status: CampaignStatus;
-  createdAt: string;
-}
-
-export interface CampaignMember {
-  id: string;
-  campaignId: string;
-  creatorId: string;
-  brandId: string;
-  status: MemberStatus;
-  initiatedBy: Role;
-  fee: number | null;
-  note: string;
-  createdAt: string;
-  updatedAt: string;
+  access: ProfileAccess;
 }
 
 export interface Me {
@@ -120,5 +106,66 @@ export interface Me {
   email: string;
   name: string;
   role: Role;
-  slug?: string;
+  companyName: string | null;
+  emailVerified: boolean;
+  isAdmin: boolean;
+  hasPassword: boolean;
+  /** Creators only. */
+  creator: null | {
+    slug: string;
+    onboarded: boolean;
+    connectedPlatforms: Platform[];
+  };
+}
+
+export interface InterestCounts {
+  profileViews7d: number;
+  profileViews30d: number;
+  searchAppearances7d: number;
+  searchAppearances30d: number;
+  /** Distinct brands that opened the full report this calendar month. Counts only. */
+  brandsViewedReportThisMonth: number;
+}
+
+export interface CreatorDashboard {
+  profile: {
+    slug: string;
+    displayName: string;
+    bio: string;
+    categories: CategoryId[];
+    city: string;
+    country: string;
+    contactEmail: string;
+    weeklyEmail: boolean;
+  };
+  accounts: PublicAccount[];
+  reports: FullReport[];
+  interest: InterestCounts;
+  referral: { code: string; friendsJoined: number; communityBuilder: boolean };
+  completeness: { percent: number; missing: string[] };
+}
+
+export type InviteStatus = 'sent' | 'opened' | 'signed_up' | 'connected' | 'cancelled' | 'expired';
+
+export interface Invite {
+  token: string;
+  name: string;
+  email: string;
+  phone: string;
+  status: InviteStatus;
+  createdAt: string;
+  expiresAt: string;
+  openedAt: string | null;
+  creatorId: string | null;
+}
+
+export interface DirectoryQuery {
+  q?: string;
+  category?: string;
+  platform?: string;
+  minFollowers?: number;
+  maxFollowers?: number;
+  minEngagement?: number;
+  location?: string;
+  sort?: 'followers' | 'engagement' | 'recent';
 }
